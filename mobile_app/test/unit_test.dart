@@ -1,8 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/models/joint_angle.dart';
-import '../lib/models/exercise_preset.dart';
-import '../lib/services/rep_counter_service.dart';
-import '../lib/services/motion_trail_service.dart';
+import 'package:teste_movimento_app/models/joint_angle.dart';
+import 'package:teste_movimento_app/services/rep_counter_service.dart';
+import 'package:teste_movimento_app/services/motion_trail_service.dart';
 
 void main() {
   group('Geometria e Cálculo Angular em Dart', () {

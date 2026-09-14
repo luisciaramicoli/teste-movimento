@@ -241,8 +241,8 @@ class _ReportScreenState extends State<ReportScreen>
                 gridData: FlGridData(
                   show: true,
                   drawVerticalLine: true,
-                  getDrawingHorizontalLine: (value) => FlLine(color: Colors.white12, strokeWidth: 1),
-                  getDrawingVerticalLine: (value) => FlLine(color: Colors.white12, strokeWidth: 1),
+                  getDrawingHorizontalLine: (value) => const FlLine(color: Colors.white12, strokeWidth: 1),
+                  getDrawingVerticalLine: (value) => const FlLine(color: Colors.white12, strokeWidth: 1),
                 ),
                 titlesData: FlTitlesData(
                   topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),

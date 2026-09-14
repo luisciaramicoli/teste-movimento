@@ -10,7 +10,6 @@ import '../models/joint_angle.dart';
 import '../models/exercise_preset.dart';
 import '../services/pose_detector_service.dart';
 import '../services/rep_counter_service.dart';
-import '../services/motion_trail_service.dart';
 import '../painters/pose_painter.dart';
 import 'report_screen.dart';
 
@@ -23,7 +22,7 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
   int _selectedCameraIndex = 0;
@@ -32,7 +31,6 @@ class _CameraScreenState extends State<CameraScreen> {
 
   late final PoseDetectorService _poseService;
   late final RepCounterService _repCounter;
-  late final MotionTrailService _motionTrail;
   late final JointAngleTracker _tracker;
 
   Map<String, JointAngleData> _currentAngles = {};
@@ -41,6 +39,7 @@ class _CameraScreenState extends State<CameraScreen> {
   int _frameCount = 0;
   DateTime _lastFpsTime = DateTime.now();
 
+  bool _isMirror = true;
   bool _isSimulationMode = false;
   Timer? _simulationTimer;
   double _simTime = 0.0;
@@ -49,9 +48,9 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _poseService = PoseDetectorService();
     _repCounter = RepCounterService(initialExercise: 'free');
-    _motionTrail = MotionTrailService(enabled: false);
     _tracker = JointAngleTracker();
 
     _isSimulationMode = widget.initialSimulationMode;
@@ -74,6 +73,7 @@ class _CameraScreenState extends State<CameraScreen> {
       final frontIndex = _cameras.indexWhere((c) => c.lensDirection == CameraLensDirection.front);
       _selectedCameraIndex = frontIndex >= 0 ? frontIndex : 0;
       final camera = _cameras[_selectedCameraIndex];
+      _isMirror = camera.lensDirection == CameraLensDirection.front;
 
       _cameraController = CameraController(
         camera,
@@ -84,6 +84,14 @@ class _CameraScreenState extends State<CameraScreen> {
       await _cameraController!.initialize();
       if (!mounted) return;
 
+      _cameraController!.addListener(() {
+        if (!mounted) return;
+        if (_cameraController != null && _cameraController!.value.hasError) {
+          debugPrint('Camera error detectado: ${_cameraController!.value.errorDescription}');
+          _reconnectCamera();
+        }
+      });
+
       setState(() {
         _isCameraInitialized = true;
       });
@@ -93,6 +101,23 @@ class _CameraScreenState extends State<CameraScreen> {
     } catch (e) {
       debugPrint('Erro ao inicializar câmera: $e');
       _fallbackToSimulation();
+    }
+  }
+
+  bool _isReconnecting = false;
+  Future<void> _reconnectCamera() async {
+    if (_isReconnecting || !mounted) return;
+    _isReconnecting = true;
+    try {
+      await _cameraController?.stopImageStream();
+      await _cameraController?.dispose();
+    } catch (_) {}
+    _cameraController = null;
+    _isCameraInitialized = false;
+    await Future.delayed(const Duration(milliseconds: 400));
+    _isReconnecting = false;
+    if (mounted) {
+      _initCamera();
     }
   }
 
@@ -133,7 +158,9 @@ class _CameraScreenState extends State<CameraScreen> {
       final inputImage = _convertCameraImageToInputImage(image);
       if (inputImage == null) return;
 
-      final poses = await _poseService.processImage(inputImage);
+      final poses = await _poseService
+          .processImage(inputImage)
+          .timeout(const Duration(milliseconds: 300), onTimeout: () => []);
       if (mounted) {
         _frameCount++;
         if (_frameCount % 5 == 0) {
@@ -163,6 +190,7 @@ class _CameraScreenState extends State<CameraScreen> {
             inputImageSize: Size(rotatedWidth, rotatedHeight),
             screenSize: MediaQuery.of(context).size,
             isFrontCamera: isFront,
+            flipHorizontal: _isMirror,
           );
 
           _tracker.update(extracted.angles, elapsed);
@@ -290,6 +318,7 @@ class _CameraScreenState extends State<CameraScreen> {
   void _switchCamera() async {
     if (_cameras.length < 2) return;
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
+    _isMirror = _cameras[_selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
     await _cameraController?.stopImageStream();
     await _cameraController?.dispose();
@@ -370,10 +399,23 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _simulationTimer?.cancel();
+    _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _poseService.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_isSimulationMode) return;
+
+    if (state == AppLifecycleState.resumed) {
+      if (_cameraController == null || !_isCameraInitialized) {
+        _initCamera();
+      }
+    }
   }
 
   Widget _buildCameraPreview(Size screenSize) {
@@ -393,6 +435,20 @@ class _CameraScreenState extends State<CameraScreen> {
     final double previewW = previewSize != null ? previewSize.height : 720.0;
     final double previewH = previewSize != null ? previewSize.width : 1280.0;
 
+    Widget previewWidget = SizedBox(
+      width: previewW,
+      height: previewH,
+      child: CameraPreview(_cameraController!),
+    );
+
+    if (_isMirror) {
+      previewWidget = Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.rotationY(pi),
+        child: previewWidget,
+      );
+    }
+
     return ClipRect(
       child: Center(
         child: SizedBox(
@@ -400,11 +456,7 @@ class _CameraScreenState extends State<CameraScreen> {
           height: screenSize.height,
           child: FittedBox(
             fit: BoxFit.cover,
-            child: SizedBox(
-              width: previewW,
-              height: previewH,
-              child: CameraPreview(_cameraController!),
-            ),
+            child: previewWidget,
           ),
         ),
       ),
@@ -526,9 +578,9 @@ class _CameraScreenState extends State<CameraScreen> {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
         ),
-        child: Row(
+        child: const Row(
           mainAxisSize: MainAxisSize.min,
-          children: const [
+          children: [
             Icon(Icons.accessibility_new, color: Color(0xFF00E5FF), size: 16),
             SizedBox(width: 6),
             Text(
@@ -641,11 +693,30 @@ class _CameraScreenState extends State<CameraScreen> {
             },
           ),
 
+          // Alternar Modo Espelho / Modo Direto (Sincroniza Câmera e Esqueleto)
+          IconButton.filledTonal(
+            icon: const Icon(Icons.swap_horiz),
+            tooltip: _isMirror ? 'Modo Espelho (Ativo)' : 'Modo Direto',
+            onPressed: () {
+              setState(() {
+                _isMirror = !_isMirror;
+              });
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(_isMirror ? 'Modo Espelho: Câmera e Esqueleto Espelhados' : 'Modo Direto: Visão Normal'),
+                  duration: const Duration(milliseconds: 1000),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
+
           // Trocar Câmera
           if (_cameras.length > 1)
             IconButton.filledTonal(
-              icon: const Icon(Icons.flip_camera_android),
-              tooltip: 'Inverter Câmera',
+              icon: const Icon(Icons.switch_camera_outlined),
+              tooltip: 'Trocar Câmera',
               onPressed: _switchCamera,
             ),
 

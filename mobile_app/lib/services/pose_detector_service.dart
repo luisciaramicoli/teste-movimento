@@ -31,6 +31,7 @@ class PoseDetectorService {
     required Size inputImageSize,
     required Size screenSize,
     bool isFrontCamera = false,
+    bool flipHorizontal = false,
   }) {
     final double scale = max(
       screenSize.width / inputImageSize.width,
@@ -45,8 +46,7 @@ class PoseDetectorService {
       final landmark = pose.landmarks[type];
       if (landmark == null || landmark.likelihood < 0.35) return null;
 
-      // Coordenadas já alinhadas com o frame de exibição pelo ML Kit
-      final double imgX = landmark.x;
+      final double imgX = flipHorizontal ? (inputImageSize.width - landmark.x) : landmark.x;
       final double imgY = landmark.y;
 
       final double x = imgX * scale + offsetX;

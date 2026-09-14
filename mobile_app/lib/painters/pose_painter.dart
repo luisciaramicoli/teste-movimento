@@ -1,4 +1,3 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/joint_angle.dart';
 
@@ -174,7 +173,7 @@ class PosePainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout();
 
-      final badgePadding = const EdgeInsets.symmetric(horizontal: 5.0, vertical: 2.0);
+      const badgePadding = EdgeInsets.symmetric(horizontal: 5.0, vertical: 2.0);
       final badgeW = textPainter.width + badgePadding.horizontal;
       final badgeH = textPainter.height + badgePadding.vertical;
 
