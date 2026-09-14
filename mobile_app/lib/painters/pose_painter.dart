@@ -156,3 +156,4 @@ class PosePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant PosePainter oldDelegate) => true;
 }
+

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -209,20 +210,57 @@ class _CameraScreenState extends State<CameraScreen> {
         rotation = InputImageRotation.rotation0deg;
     }
 
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (format == null) return null;
+    final int width = image.width;
+    final int height = image.height;
 
-    // Concatenação de planos
-    final WriteBuffer allBytes = WriteBuffer();
-    for (final Plane plane in image.planes) {
-      allBytes.putUint8List(plane.bytes);
+    Uint8List bytes;
+    InputImageFormat format;
+
+    if (Platform.isAndroid) {
+      format = InputImageFormat.nv21;
+      if (image.planes.length == 1) {
+        bytes = image.planes[0].bytes;
+      } else {
+        final int ySize = width * height;
+        final int uvSize = width * height ~/ 2;
+        final Uint8List nv21 = Uint8List(ySize + uvSize);
+
+        final Plane yPlane = image.planes[0];
+        int yIndex = 0;
+        for (int y = 0; y < height; y++) {
+          final int rowStart = y * yPlane.bytesPerRow;
+          for (int x = 0; x < width; x++) {
+            nv21[yIndex++] = yPlane.bytes[rowStart + x];
+          }
+        }
+
+        final Plane uPlane = image.planes[1];
+        final Plane vPlane = image.planes[2];
+        final int uvRowStride = uPlane.bytesPerRow;
+        final int uvPixelStride = uPlane.bytesPerPixel ?? 1;
+
+        int uvIndex = ySize;
+        final int halfHeight = height ~/ 2;
+        final int halfWidth = width ~/ 2;
+        for (int y = 0; y < halfHeight; y++) {
+          final int rowStart = y * uvRowStride;
+          for (int x = 0; x < halfWidth; x++) {
+            final int uvOffset = rowStart + (x * uvPixelStride);
+            nv21[uvIndex++] = vPlane.bytes[uvOffset]; // V
+            nv21[uvIndex++] = uPlane.bytes[uvOffset]; // U
+          }
+        }
+        bytes = nv21;
+      }
+    } else {
+      format = InputImageFormat.bgra8888;
+      bytes = image.planes[0].bytes;
     }
-    final bytes = allBytes.done().buffer.asUint8List();
 
     return InputImage.fromBytes(
       bytes: bytes,
       metadata: InputImageMetadata(
-        size: Size(image.width.toDouble(), image.height.toDouble()),
+        size: Size(width.toDouble(), height.toDouble()),
         rotation: rotation,
         format: format,
         bytesPerRow: image.planes[0].bytesPerRow,
@@ -502,3 +540,4 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 }
+

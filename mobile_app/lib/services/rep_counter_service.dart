@@ -219,3 +219,4 @@ class RepCounterService {
     return double.parse((sum / repsHistory.length).toStringAsFixed(2));
   }
 }
+

@@ -94,3 +94,4 @@ mobile_app/
 │   └── unit_test.dart                     # Testes unitários para cálculo angular e repetições
 └── pubspec.yaml                           # Gerenciador de dependências do Flutter
 ```
+

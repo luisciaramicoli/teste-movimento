@@ -97,3 +97,4 @@ const Map<String, ExerciseConfig> exercisePresets = {
     instructionUp: 'Desça de forma controlada',
   ),
 };
+
