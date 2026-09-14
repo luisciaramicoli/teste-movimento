@@ -35,6 +35,7 @@ class _CameraScreenState extends State<CameraScreen> {
   late final JointAngleTracker _tracker;
 
   Map<String, JointAngleData> _currentAngles = {};
+  Map<String, Point2D> _currentLandmarks = {};
   double _fps = 0.0;
   int _frameCount = 0;
   DateTime _lastFpsTime = DateTime.now();
@@ -48,7 +49,7 @@ class _CameraScreenState extends State<CameraScreen> {
   void initState() {
     super.initState();
     _poseService = PoseDetectorService();
-    _repCounter = RepCounterService(initialExercise: 'squat');
+    _repCounter = RepCounterService(initialExercise: 'free');
     _motionTrail = MotionTrailService(enabled: true);
     _tracker = JointAngleTracker();
 
@@ -68,15 +69,15 @@ class _CameraScreenState extends State<CameraScreen> {
         return;
       }
 
-      // Procura câmera frontal ou traseira
-      _selectedCameraIndex = 0;
+      // Procura câmera frontal por padrão para exercícios ou primeira disponível
+      final frontIndex = _cameras.indexWhere((c) => c.lensDirection == CameraLensDirection.front);
+      _selectedCameraIndex = frontIndex >= 0 ? frontIndex : 0;
       final camera = _cameras[_selectedCameraIndex];
 
       _cameraController = CameraController(
         camera,
         ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.nv21,
       );
 
       await _cameraController!.initialize();
@@ -107,23 +108,25 @@ class _CameraScreenState extends State<CameraScreen> {
     _simulationTimer = Timer.periodic(const Duration(milliseconds: 33), (timer) {
       _simTime += 0.033;
       final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
+      final screenSize = MediaQuery.of(context).size;
 
-      final angles = _poseService.generateSyntheticAngles(_simTime);
-      _tracker.update(angles, elapsed);
-      _repCounter.update(angles, elapsed);
+      final extracted = _poseService.generateSyntheticAngles(_simTime, screenSize);
+      _tracker.update(extracted.angles, elapsed);
+      _repCounter.update(extracted.angles, elapsed);
 
       // Atualiza trilhas
       final Map<String, Point2D?> trailPts = {
-        'LEFT_WRIST': const Point2D(120, 260),
-        'RIGHT_WRIST': const Point2D(280, 260),
-        'LEFT_KNEE': angles['joelho_esq']?.vertex,
-        'RIGHT_KNEE': angles['joelho_dir']?.vertex,
+        'LEFT_WRIST': extracted.landmarks['LEFT_WRIST'],
+        'RIGHT_WRIST': extracted.landmarks['RIGHT_WRIST'],
+        'LEFT_KNEE': extracted.landmarks['LEFT_KNEE'],
+        'RIGHT_KNEE': extracted.landmarks['RIGHT_KNEE'],
       };
       _motionTrail.update(trailPts);
 
       if (mounted) {
         setState(() {
-          _currentAngles = angles;
+          _currentAngles = extracted.angles;
+          _currentLandmarks = extracted.landmarks;
           _fps = 30.0;
         });
       }
@@ -139,45 +142,59 @@ class _CameraScreenState extends State<CameraScreen> {
       if (inputImage == null) return;
 
       final poses = await _poseService.processImage(inputImage);
-      if (poses.isNotEmpty && mounted) {
-        final pose = poses.first;
-        final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
-
-        final isFront = _cameras.isNotEmpty &&
-            _cameras[_selectedCameraIndex].lensDirection == CameraLensDirection.front;
-
-        final angles = _poseService.extractAnglesFromPose(
-          pose,
-          Size(image.width.toDouble(), image.height.toDouble()),
-          MediaQuery.of(context).size,
-          isFrontCamera: isFront,
-        );
-
-        _tracker.update(angles, elapsed);
-        _repCounter.update(angles, elapsed);
-
-        // Atualização das trilhas
-        final Map<String, Point2D?> trailPts = {};
-        angles.forEach((k, v) {
-          if (v.vertex != null) {
-            trailPts[k] = v.vertex;
-          }
-        });
-        _motionTrail.update(trailPts);
-
+      if (mounted) {
         _frameCount++;
-        if (_frameCount % 10 == 0) {
+        if (_frameCount % 5 == 0) {
           final now = DateTime.now();
           final diff = now.difference(_lastFpsTime).inMilliseconds;
           if (diff > 0) {
-            _fps = 10000.0 / diff;
+            _fps = (5000.0 / diff).clamp(1.0, 60.0);
           }
           _lastFpsTime = now;
         }
 
-        setState(() {
-          _currentAngles = angles;
-        });
+        if (poses.isNotEmpty) {
+          final pose = poses.first;
+          final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
+
+          final isFront = _cameras.isNotEmpty &&
+              _cameras[_selectedCameraIndex].lensDirection == CameraLensDirection.front;
+
+          // No Android em modo retrato (rotação 90° ou 270°), a largura e altura são trocadas
+          final bool isRotated = inputImage.metadata?.rotation == InputImageRotation.rotation90deg ||
+              inputImage.metadata?.rotation == InputImageRotation.rotation270deg;
+          final double rotatedWidth = isRotated ? image.height.toDouble() : image.width.toDouble();
+          final double rotatedHeight = isRotated ? image.width.toDouble() : image.height.toDouble();
+
+          final extracted = _poseService.extractAnglesFromPose(
+            pose,
+            inputImageSize: Size(rotatedWidth, rotatedHeight),
+            screenSize: MediaQuery.of(context).size,
+            isFrontCamera: isFront,
+          );
+
+          _tracker.update(extracted.angles, elapsed);
+          _repCounter.update(extracted.angles, elapsed);
+
+          // Atualização das trilhas de movimento
+          final Map<String, Point2D?> trailPts = {
+            'LEFT_WRIST': extracted.landmarks['LEFT_WRIST'],
+            'RIGHT_WRIST': extracted.landmarks['RIGHT_WRIST'],
+            'LEFT_KNEE': extracted.landmarks['LEFT_KNEE'],
+            'RIGHT_KNEE': extracted.landmarks['RIGHT_KNEE'],
+          };
+          _motionTrail.update(trailPts);
+
+          setState(() {
+            _currentAngles = extracted.angles;
+            _currentLandmarks = extracted.landmarks;
+          });
+        } else {
+          setState(() {
+            _currentAngles = {};
+            _currentLandmarks = {};
+          });
+        }
       }
     } catch (e) {
       debugPrint('Erro processando frame: $e');
@@ -212,6 +229,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
     final int width = image.width;
     final int height = image.height;
+    final int ySize = width * height;
+    final int uvSize = width * height ~/ 2;
 
     Uint8List bytes;
     InputImageFormat format;
@@ -221,33 +240,40 @@ class _CameraScreenState extends State<CameraScreen> {
       if (image.planes.length == 1) {
         bytes = image.planes[0].bytes;
       } else {
-        final int ySize = width * height;
-        final int uvSize = width * height ~/ 2;
         final Uint8List nv21 = Uint8List(ySize + uvSize);
-
         final Plane yPlane = image.planes[0];
-        int yIndex = 0;
-        for (int y = 0; y < height; y++) {
-          final int rowStart = y * yPlane.bytesPerRow;
-          for (int x = 0; x < width; x++) {
-            nv21[yIndex++] = yPlane.bytes[rowStart + x];
+        final Plane uPlane = image.planes[1];
+        final Plane vPlane = image.planes[2];
+
+        // 1. Cópia ultra-rápida do plano Y
+        if (yPlane.bytesPerRow == width) {
+          nv21.setRange(0, ySize, yPlane.bytes);
+        } else {
+          for (int y = 0; y < height; y++) {
+            nv21.setRange(y * width, (y + 1) * width, yPlane.bytes, y * yPlane.bytesPerRow);
           }
         }
 
-        final Plane uPlane = image.planes[1];
-        final Plane vPlane = image.planes[2];
-        final int uvRowStride = uPlane.bytesPerRow;
-        final int uvPixelStride = uPlane.bytesPerPixel ?? 1;
+        // 2. Cópia dos planos UV (NV21 espera V seguido de U)
+        final int vPixelStride = vPlane.bytesPerPixel ?? 1;
+        if (vPixelStride == 2 && vPlane.bytesPerRow == width && vPlane.bytes.length >= uvSize) {
+          // No Android CameraX YUV_420_888, vPlane já é o buffer entrelaçado VU contíguo
+          nv21.setRange(ySize, ySize + uvSize, vPlane.bytes);
+        } else {
+          int uvIndex = ySize;
+          final int halfHeight = height ~/ 2;
+          final int halfWidth = width ~/ 2;
+          final int uRowStride = uPlane.bytesPerRow;
+          final int vRowStride = vPlane.bytesPerRow;
+          final int uPixelStride = uPlane.bytesPerPixel ?? 1;
 
-        int uvIndex = ySize;
-        final int halfHeight = height ~/ 2;
-        final int halfWidth = width ~/ 2;
-        for (int y = 0; y < halfHeight; y++) {
-          final int rowStart = y * uvRowStride;
-          for (int x = 0; x < halfWidth; x++) {
-            final int uvOffset = rowStart + (x * uvPixelStride);
-            nv21[uvIndex++] = vPlane.bytes[uvOffset]; // V
-            nv21[uvIndex++] = uPlane.bytes[uvOffset]; // U
+          for (int y = 0; y < halfHeight; y++) {
+            final int uRow = y * uRowStride;
+            final int vRow = y * vRowStride;
+            for (int x = 0; x < halfWidth; x++) {
+              nv21[uvIndex++] = vPlane.bytes[vRow + x * vPixelStride];
+              nv21[uvIndex++] = uPlane.bytes[uRow + x * uPixelStride];
+            }
           }
         }
         bytes = nv21;
@@ -294,21 +320,40 @@ class _CameraScreenState extends State<CameraScreen> {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: exercisePresets.values.map((preset) {
-              return ListTile(
-                leading: Icon(
-                  preset.name == 'free' ? Icons.accessibility_new : Icons.fitness_center,
-                  color: const Color(0xFF00E5FF),
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                title: Text(preset.displayName, style: const TextStyle(color: Colors.white)),
-                onTap: () {
-                  setState(() {
-                    _repCounter.setExercise(preset.name);
-                  });
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
+              ),
+              ...exercisePresets.values.map((preset) {
+                final isSelected = _repCounter.config.name == preset.name;
+                return ListTile(
+                  leading: Icon(
+                    preset.name == 'free' ? Icons.accessibility_new : Icons.fitness_center,
+                    color: isSelected ? const Color(0xFF00E676) : const Color(0xFF00E5FF),
+                  ),
+                  title: Text(
+                    preset.displayName,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: isSelected ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+                  onTap: () {
+                    setState(() {
+                      _repCounter.setExercise(preset.name);
+                    });
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
           ),
         );
       },
@@ -338,17 +383,52 @@ class _CameraScreenState extends State<CameraScreen> {
     super.dispose();
   }
 
+  Widget _buildCameraPreview(Size screenSize) {
+    if (!_isCameraInitialized || _cameraController == null) {
+      return Container(
+        color: const Color(0xFF181818),
+        child: const Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF00E5FF),
+          ),
+        ),
+      );
+    }
+
+    final previewSize = _cameraController!.value.previewSize;
+    // Android portrait: previewSize is landscape (width > height), so swap
+    final double previewW = previewSize != null ? previewSize.height : 720.0;
+    final double previewH = previewSize != null ? previewSize.width : 1280.0;
+
+    return ClipRect(
+      child: Center(
+        child: SizedBox(
+          width: screenSize.width,
+          height: screenSize.height,
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: previewW,
+              height: previewH,
+              child: CameraPreview(_cameraController!),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
         children: [
           // 1. Fundo da Câmera ou Placeholder do Modo Simulação
-          if (_isCameraInitialized && _cameraController != null)
-            CameraPreview(_cameraController!)
-          else
+          if (_isSimulationMode)
             Container(
               color: const Color(0xFF181818),
               child: const Center(
@@ -357,34 +437,42 @@ class _CameraScreenState extends State<CameraScreen> {
                   style: TextStyle(color: Colors.white38, fontSize: 18),
                 ),
               ),
-            ),
+            )
+          else
+            _buildCameraPreview(screenSize),
 
           // 2. CustomPainter com Esqueleto, Badges e Comet Trail
-          CustomPaint(
-            painter: PosePainter(
-              anglesData: _currentAngles,
-              motionTrail: _motionTrail,
-            ),
-          ),
-
-          // 3. HUD Superior (Painel de Ângulos e FPS)
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: _buildAnglesHud(),
-            ),
-          ),
-
-          // 4. Card de Exercício e Repetições (Canto Superior Direito)
-          if (_repCounter.config.name != 'free')
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topRight,
-                child: _buildRepCard(),
+          Positioned.fill(
+            child: CustomPaint(
+              size: screenSize,
+              painter: PosePainter(
+                anglesData: _currentAngles,
+                landmarks: _currentLandmarks,
+                motionTrail: _motionTrail,
+                activeExercise: _repCounter.config.name,
               ),
             ),
+          ),
 
-          // 5. Barra Inferior de Controles
+          // 3. HUD Superior (Painel de Ângulos, FPS e Exercício)
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8.0, left: 12.0, right: 12.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildAnglesHud(),
+                  if (_repCounter.config.name != 'free')
+                    _buildRepCard()
+                  else
+                    _buildModeBadge(),
+                ],
+              ),
+            ),
+          ),
+
+          // 4. Barra Inferior de Controles
           Align(
             alignment: Alignment.bottomCenter,
             child: _buildBottomControls(),
@@ -396,11 +484,10 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Widget _buildAnglesHud() {
     return Container(
-      margin: const EdgeInsets.all(12),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xCC1A1A1A),
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xD914181D),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.white24),
       ),
       child: Column(
@@ -410,64 +497,122 @@ class _CameraScreenState extends State<CameraScreen> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('MONITORAMENTO', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold)),
+              const Text('MONITOR', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold)),
               const SizedBox(width: 8),
-              Text('FPS: ${_fps.toStringAsFixed(0)}', style: const TextStyle(color: Colors.grey, fontSize: 10)),
+              Text('${_fps.toStringAsFixed(0)} FPS', style: const TextStyle(color: Colors.white70, fontSize: 10)),
             ],
           ),
           const SizedBox(height: 4),
-          ..._currentAngles.entries.take(4).map((entry) {
-            final val = entry.value.angle != null ? '${entry.value.angle!.round()}°' : '--';
-            return Text(
-              '${entry.value.label.split(" ")[0]}: $val',
-              style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'monospace'),
-            );
-          }),
+          _buildHudRow('Cotovelo', _currentAngles['cotovelo_esq']?.angle, _currentAngles['cotovelo_dir']?.angle),
+          _buildHudRow('Ombro', _currentAngles['ombro_esq']?.angle, _currentAngles['ombro_dir']?.angle),
+          _buildHudRow('Joelho', _currentAngles['joelho_esq']?.angle, _currentAngles['joelho_dir']?.angle),
+          _buildHudRow('Quadril', _currentAngles['quadril_esq']?.angle, _currentAngles['quadril_dir']?.angle),
         ],
       ),
     );
   }
 
-  Widget _buildRepCard() {
-    return Container(
-      margin: const EdgeInsets.all(12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xDD1E1E1E),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF00E676)),
+  Widget _buildHudRow(String name, double? left, double? right) {
+    final strL = left != null ? '${left.round()}°' : '--';
+    final strR = right != null ? '${right.round()}°' : '--';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1.0),
+      child: Text(
+        '$name E:$strL D:$strR',
+        style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'monospace'),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            _repCounter.config.displayName,
-            style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'REPS: ${_repCounter.repCount}',
-            style: const TextStyle(color: Color(0xFF00E676), fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 4),
-          SizedBox(
-            width: 90,
-            height: 6,
-            child: LinearProgressIndicator(
-              value: _repCounter.progressPct,
-              backgroundColor: Colors.white12,
-              valueColor: AlwaysStoppedAnimation(
-                _repCounter.progressPct >= 0.95 ? const Color(0xFF00E676) : const Color(0xFF00E5FF),
+    );
+  }
+
+  Widget _buildModeBadge() {
+    return GestureDetector(
+      onTap: _openExerciseSelector,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xD914181D),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.accessibility_new, color: Color(0xFF00E5FF), size: 16),
+            SizedBox(width: 6),
+            Text(
+              'Modo Livre',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _repCounter.feedbackMessage,
-            style: const TextStyle(color: Colors.white, fontSize: 10),
-          ),
-        ],
+            SizedBox(width: 4),
+            Icon(Icons.arrow_drop_down, color: Colors.white54, size: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRepCard() {
+    return GestureDetector(
+      onTap: _openExerciseSelector,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xD914181D),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFF00E676)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00E676).withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _repCounter.config.displayName.split(' ')[0],
+                  style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+                const Icon(Icons.arrow_drop_down, color: Colors.white54, size: 14),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'REPS: ${_repCounter.repCount}',
+              style: const TextStyle(color: Color(0xFF00E676), fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: 90,
+              height: 6,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: _repCounter.progressPct,
+                  backgroundColor: Colors.white12,
+                  valueColor: AlwaysStoppedAnimation(
+                    _repCounter.progressPct >= 0.95 ? const Color(0xFF00E676) : const Color(0xFF00E5FF),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _repCounter.feedbackMessage,
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+          ],
+        ),
       ),
     );
   }

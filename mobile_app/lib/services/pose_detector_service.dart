@@ -26,31 +26,37 @@ class PoseDetectorService {
   }
 
   /// Converte os marcos anatômicos do Google ML Kit em coordenadas 2D e calcula os ângulos.
-  Map<String, JointAngleData> extractAnglesFromPose(
-    Pose pose,
-    Size imageSize,
-    Size widgetSize, {
+  ExtractedPoseData extractAnglesFromPose(
+    Pose pose, {
+    required Size inputImageSize,
+    required Size screenSize,
     bool isFrontCamera = false,
   }) {
+    final double scale = max(
+      screenSize.width / inputImageSize.width,
+      screenSize.height / inputImageSize.height,
+    );
+    final double renderW = inputImageSize.width * scale;
+    final double renderH = inputImageSize.height * scale;
+    final double offsetX = (screenSize.width - renderW) / 2.0;
+    final double offsetY = (screenSize.height - renderH) / 2.0;
+
     Point2D? getPoint(PoseLandmarkType type) {
       final landmark = pose.landmarks[type];
-      if (landmark == null) return null;
+      if (landmark == null || landmark.likelihood < 0.35) return null;
 
-      // Escala para as dimensões do widget na tela
-      final scaleX = widgetSize.width / imageSize.width;
-      final scaleY = widgetSize.height / imageSize.height;
+      // Espelhamento horizontal para câmera frontal (comportamento de espelho)
+      final double imgX = isFrontCamera ? (inputImageSize.width - landmark.x) : landmark.x;
+      final double imgY = landmark.y;
 
-      double x = landmark.x * scaleX;
-      if (isFrontCamera) {
-        // Espelhamento horizontal para câmera frontal
-        x = widgetSize.width - x;
-      }
-      final y = landmark.y * scaleY;
+      final double x = imgX * scale + offsetX;
+      final double y = imgY * scale + offsetY;
 
       return Point2D(x, y);
     }
 
     final Map<String, Point2D?> points = {
+      'NOSE': getPoint(PoseLandmarkType.nose),
       'LEFT_SHOULDER': getPoint(PoseLandmarkType.leftShoulder),
       'RIGHT_SHOULDER': getPoint(PoseLandmarkType.rightShoulder),
       'LEFT_ELBOW': getPoint(PoseLandmarkType.leftElbow),
@@ -64,6 +70,11 @@ class PoseDetectorService {
       'LEFT_ANKLE': getPoint(PoseLandmarkType.leftAnkle),
       'RIGHT_ANKLE': getPoint(PoseLandmarkType.rightAnkle),
     };
+
+    final Map<String, Point2D> validLandmarks = {};
+    points.forEach((k, v) {
+      if (v != null) validLandmarks[k] = v;
+    });
 
     final Map<String, JointAngleData> angles = {};
 
@@ -94,11 +105,11 @@ class PoseDetectorService {
     angles['joelho_esq'] = compute('joelho_esq', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'Joelho Esquerdo');
     angles['joelho_dir'] = compute('joelho_dir', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'Joelho Direito');
 
-    return angles;
+    return ExtractedPoseData(angles: angles, landmarks: validLandmarks);
   }
 
   /// Gera dados sintéticos de pose para o modo demonstração/teste (sem câmera física)
-  Map<String, JointAngleData> generateSyntheticAngles(double timeSec) {
+  ExtractedPoseData generateSyntheticAngles(double timeSec, Size screenSize) {
     // Simula ciclo de agachamento de 2.5s
     final squatCycle = sin(2 * pi * 0.4 * timeSec);
     final joelhoAngle = double.parse((125.0 - 45.0 * squatCycle).toStringAsFixed(1));
@@ -108,64 +119,85 @@ class PoseDetectorService {
     final cotoveloAngle = double.parse((110.0 + 40.0 * armCycle).toStringAsFixed(1));
     final ombroAngle = double.parse((85.0 + 35.0 * armCycle).toStringAsFixed(1));
 
-    return {
+    final double cx = screenSize.width / 2.0;
+    final double cy = screenSize.height / 2.0;
+
+    final landmarks = {
+      'NOSE': Point2D(cx, cy - 180),
+      'LEFT_SHOULDER': Point2D(cx - 60, cy - 130),
+      'RIGHT_SHOULDER': Point2D(cx + 60, cy - 130),
+      'LEFT_ELBOW': Point2D(cx - 90, cy - 60 + 20 * armCycle),
+      'RIGHT_ELBOW': Point2D(cx + 90, cy - 60 - 20 * armCycle),
+      'LEFT_WRIST': Point2D(cx - 100, cy + 10 + 30 * armCycle),
+      'RIGHT_WRIST': Point2D(cx + 100, cy + 10 - 30 * armCycle),
+      'LEFT_HIP': Point2D(cx - 45, cy + 30 + 15 * squatCycle),
+      'RIGHT_HIP': Point2D(cx + 45, cy + 30 + 15 * squatCycle),
+      'LEFT_KNEE': Point2D(cx - 50, cy + 130 + 25 * squatCycle),
+      'RIGHT_KNEE': Point2D(cx + 50, cy + 130 + 25 * squatCycle),
+      'LEFT_ANKLE': Point2D(cx - 50, cy + 230),
+      'RIGHT_ANKLE': Point2D(cx + 50, cy + 230),
+    };
+
+    final angles = {
       'cotovelo_esq': JointAngleData(
         key: 'cotovelo_esq',
         label: 'Cotovelo Esquerdo',
         angle: cotoveloAngle,
-        vertex: const Point2D(120, 260),
+        vertex: landmarks['LEFT_ELBOW'],
         isValid: true,
       ),
       'cotovelo_dir': JointAngleData(
         key: 'cotovelo_dir',
         label: 'Cotovelo Direito',
         angle: cotoveloAngle,
-        vertex: const Point2D(280, 260),
+        vertex: landmarks['RIGHT_ELBOW'],
         isValid: true,
       ),
       'ombro_esq': JointAngleData(
         key: 'ombro_esq',
         label: 'Ombro Esquerdo',
         angle: ombroAngle,
-        vertex: const Point2D(140, 200),
+        vertex: landmarks['LEFT_SHOULDER'],
         isValid: true,
       ),
       'ombro_dir': JointAngleData(
         key: 'ombro_dir',
         label: 'Ombro Direito',
         angle: ombroAngle,
-        vertex: const Point2D(260, 200),
+        vertex: landmarks['RIGHT_SHOULDER'],
         isValid: true,
       ),
       'quadril_esq': JointAngleData(
         key: 'quadril_esq',
         label: 'Quadril Esquerdo',
         angle: quadrilAngle,
-        vertex: const Point2D(160, 380),
+        vertex: landmarks['LEFT_HIP'],
         isValid: true,
       ),
       'quadril_dir': JointAngleData(
         key: 'quadril_dir',
         label: 'Quadril Direito',
         angle: quadrilAngle,
-        vertex: const Point2D(240, 380),
+        vertex: landmarks['RIGHT_HIP'],
         isValid: true,
       ),
       'joelho_esq': JointAngleData(
         key: 'joelho_esq',
         label: 'Joelho Esquerdo',
         angle: joelhoAngle,
-        vertex: const Point2D(150, 490),
+        vertex: landmarks['LEFT_KNEE'],
         isValid: true,
       ),
       'joelho_dir': JointAngleData(
         key: 'joelho_dir',
         label: 'Joelho Direito',
         angle: joelhoAngle,
-        vertex: const Point2D(250, 490),
+        vertex: landmarks['RIGHT_KNEE'],
         isValid: true,
       ),
     };
+
+    return ExtractedPoseData(angles: angles, landmarks: landmarks);
   }
 }
 

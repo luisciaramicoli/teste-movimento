@@ -43,6 +43,16 @@ class JointAngleData {
   });
 }
 
+class ExtractedPoseData {
+  final Map<String, JointAngleData> angles;
+  final Map<String, Point2D> landmarks;
+
+  const ExtractedPoseData({
+    required this.angles,
+    required this.landmarks,
+  });
+}
+
 class JointRecord {
   final String key;
   final String label;
