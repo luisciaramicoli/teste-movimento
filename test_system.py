@@ -6,6 +6,8 @@ import numpy as np
 
 from pose_detector import PoseDetector, calculate_angle, JOINT_DEFINITIONS
 from tracker import AngleTracker
+from rep_counter import ExerciseRepCounter
+from motion_trail import MotionTrail
 from visualizer import generate_rom_report_graph
 
 
@@ -109,6 +111,62 @@ class TestJointTracking(unittest.TestCase):
         self.assertIsInstance(angles, dict)
         self.assertEqual(len(angles), len(JOINT_DEFINITIONS))
 
+    def test_rep_counter_squat(self):
+        counter = ExerciseRepCounter(exercise_name="squat")
+        self.assertEqual(counter.rep_count, 0)
+
+        # Simula ciclo de agachamento:
+        # Posição inicial em pé (165°)
+        counter.update({"joelho_esq": {"angle": 165.0, "valid": True}}, timestamp=0.0)
+        # Descida até 90° (pico de agachamento)
+        counter.update({"joelho_esq": {"angle": 130.0, "valid": True}}, timestamp=0.5)
+        counter.update({"joelho_esq": {"angle": 88.0, "valid": True}}, timestamp=1.0)
+        # Retorno subindo até a posição em pé (160°)
+        counter.update({"joelho_esq": {"angle": 125.0, "valid": True}}, timestamp=1.5)
+        rep = counter.update({"joelho_esq": {"angle": 162.0, "valid": True}}, timestamp=2.0)
+
+        self.assertIsNotNone(rep)
+        self.assertEqual(counter.rep_count, 1)
+        self.assertTrue(rep.is_valid)
+        self.assertGreater(rep.total_duration, 0.5)
+        self.assertGreater(rep.rom, 60.0)
+
+    def test_rep_counter_curl(self):
+        counter = ExerciseRepCounter(exercise_name="curl")
+        # Simula rosca bíceps: 150° -> 45° -> 150°
+        counter.update({"cotovelo_esq": {"angle": 150.0, "valid": True}}, timestamp=0.0)
+        counter.update({"cotovelo_esq": {"angle": 90.0, "valid": True}}, timestamp=0.6)
+        counter.update({"cotovelo_esq": {"angle": 45.0, "valid": True}}, timestamp=1.2)
+        counter.update({"cotovelo_esq": {"angle": 100.0, "valid": True}}, timestamp=1.8)
+        rep = counter.update({"cotovelo_esq": {"angle": 148.0, "valid": True}}, timestamp=2.4)
+
+        self.assertIsNotNone(rep)
+        self.assertEqual(counter.rep_count, 1)
+        self.assertEqual(rep.rep_number, 1)
+
+    def test_motion_trail(self):
+        trail = MotionTrail(max_length=5, enabled=True)
+        # Simula movimentação do pulso esquerdo
+        for i in range(10):
+            mock_landmarks = {
+                "LEFT_WRIST": {"pixel": (100 + i * 5, 200 + i * 2), "valid": True}
+            }
+            trail.update(mock_landmarks)
+
+        # Não deve ultrapassar max_length
+        self.assertEqual(len(trail.trails["LEFT_WRIST"]), 5)
+
+        # Testa desenho sobre frame
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        drawn = trail.draw(mock_frame)
+        self.assertEqual(drawn.shape, (480, 640, 3))
+
+        # Testa toggle e clear
+        trail.toggle()
+        self.assertFalse(trail.enabled)
+        self.assertEqual(len(trail.trails["LEFT_WRIST"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
