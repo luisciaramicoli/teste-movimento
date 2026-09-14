@@ -1,9 +1,17 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:camera_android/camera_android.dart';
+import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'views/camera_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isAndroid) {
+    // Força uso da implementação estável Camera2 (camera_android) para evitar
+    // a exceção NullPointerException em ImageProxyHostApiImpl do CameraX
+    CameraPlatform.instance = AndroidCamera();
+  }
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,

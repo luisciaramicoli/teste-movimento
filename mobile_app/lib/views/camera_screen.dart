@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -238,9 +239,10 @@ class _CameraScreenState extends State<CameraScreen> {
 
         // 2. Cópia dos planos UV (NV21 espera V seguido de U)
         final int vPixelStride = vPlane.bytesPerPixel ?? 1;
-        if (vPixelStride == 2 && vPlane.bytesPerRow == width && vPlane.bytes.length >= uvSize) {
-          // No Android CameraX YUV_420_888, vPlane já é o buffer entrelaçado VU contíguo
-          nv21.setRange(ySize, ySize + uvSize, vPlane.bytes);
+        if (vPixelStride == 2 && vPlane.bytesPerRow == width && vPlane.bytes.length >= uvSize - 1) {
+          // Buffer entrelaçado VU contíguo
+          final int copyLen = min(uvSize, vPlane.bytes.length);
+          nv21.setRange(ySize, ySize + copyLen, vPlane.bytes);
         } else {
           int uvIndex = ySize;
           final int halfHeight = height ~/ 2;
@@ -248,13 +250,22 @@ class _CameraScreenState extends State<CameraScreen> {
           final int uRowStride = uPlane.bytesPerRow;
           final int vRowStride = vPlane.bytesPerRow;
           final int uPixelStride = uPlane.bytesPerPixel ?? 1;
+          final int vBytesLen = vPlane.bytes.length;
+          final int uBytesLen = uPlane.bytes.length;
 
           for (int y = 0; y < halfHeight; y++) {
             final int uRow = y * uRowStride;
             final int vRow = y * vRowStride;
             for (int x = 0; x < halfWidth; x++) {
-              nv21[uvIndex++] = vPlane.bytes[vRow + x * vPixelStride];
-              nv21[uvIndex++] = uPlane.bytes[uRow + x * uPixelStride];
+              final int vOffset = vRow + x * vPixelStride;
+              final int uOffset = uRow + x * uPixelStride;
+              if (uvIndex < nv21.length && vOffset < vBytesLen) {
+                nv21[uvIndex] = vPlane.bytes[vOffset];
+              }
+              if (uvIndex + 1 < nv21.length && uOffset < uBytesLen) {
+                nv21[uvIndex + 1] = uPlane.bytes[uOffset];
+              }
+              uvIndex += 2;
             }
           }
         }
