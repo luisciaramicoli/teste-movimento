@@ -106,3 +106,4 @@ class MotionTrail:
             cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
         return frame
+

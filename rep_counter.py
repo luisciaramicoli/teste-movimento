@@ -302,3 +302,4 @@ class ExerciseRepCounter:
         if not self.reps_history:
             return 0.0
         return round(sum(r.total_duration for r in self.reps_history) / len(self.reps_history), 2)
+
