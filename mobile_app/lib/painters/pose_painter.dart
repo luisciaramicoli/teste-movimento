@@ -1,12 +1,10 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/joint_angle.dart';
-import '../services/motion_trail_service.dart';
 
 class PosePainter extends CustomPainter {
   final Map<String, JointAngleData> anglesData;
   final Map<String, Point2D> landmarks;
-  final MotionTrailService motionTrail;
   final String activeExercise;
   final bool showAngles;
   final bool showSkeleton;
@@ -14,7 +12,6 @@ class PosePainter extends CustomPainter {
   PosePainter({
     required this.anglesData,
     this.landmarks = const {},
-    required this.motionTrail,
     this.activeExercise = 'free',
     this.showAngles = true,
     this.showSkeleton = true,
@@ -22,45 +19,14 @@ class PosePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. Desenhar trilhas de cometa (Comet Trail)
-    if (motionTrail.enabled) {
-      _drawMotionTrails(canvas);
-    }
-
-    // 2. Desenhar conexões ósseas do esqueleto
+    // 1. Desenhar conexões ósseas do esqueleto
     if (showSkeleton) {
       _drawSkeleton(canvas);
     }
 
-    // 3. Desenhar círculos e badges de ângulos nas articulações
+    // 2. Desenhar círculos e badges de ângulos nas articulações
     if (showAngles) {
       _drawJointBadges(canvas);
-    }
-  }
-
-  void _drawMotionTrails(Canvas canvas) {
-    for (final entry in motionTrail.trails.entries) {
-      final name = entry.key;
-      final points = entry.value.toList();
-      if (points.length < 2) continue;
-
-      final baseColor = motionTrail.jointColors[name] ?? Colors.cyanAccent;
-
-      for (int i = 1; i < points.length; i++) {
-        final p1 = Offset(points[i - 1].x, points[i - 1].y);
-        final p2 = Offset(points[i].x, points[i].y);
-
-        final alpha = (i / points.length).clamp(0.1, 0.85);
-        final strokeWidth = (4.0 * (i / points.length)).clamp(1.0, 4.0);
-
-        final paint = Paint()
-          ..color = baseColor.withOpacity(alpha)
-          ..strokeWidth = strokeWidth
-          ..strokeCap = StrokeCap.round
-          ..style = PaintingStyle.stroke;
-
-        canvas.drawLine(p1, p2, paint);
-      }
     }
   }
 

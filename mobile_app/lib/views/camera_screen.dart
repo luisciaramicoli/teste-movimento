@@ -50,7 +50,7 @@ class _CameraScreenState extends State<CameraScreen> {
     super.initState();
     _poseService = PoseDetectorService();
     _repCounter = RepCounterService(initialExercise: 'free');
-    _motionTrail = MotionTrailService(enabled: true);
+    _motionTrail = MotionTrailService(enabled: false);
     _tracker = JointAngleTracker();
 
     _isSimulationMode = widget.initialSimulationMode;
@@ -114,15 +114,6 @@ class _CameraScreenState extends State<CameraScreen> {
       _tracker.update(extracted.angles, elapsed);
       _repCounter.update(extracted.angles, elapsed);
 
-      // Atualiza trilhas
-      final Map<String, Point2D?> trailPts = {
-        'LEFT_WRIST': extracted.landmarks['LEFT_WRIST'],
-        'RIGHT_WRIST': extracted.landmarks['RIGHT_WRIST'],
-        'LEFT_KNEE': extracted.landmarks['LEFT_KNEE'],
-        'RIGHT_KNEE': extracted.landmarks['RIGHT_KNEE'],
-      };
-      _motionTrail.update(trailPts);
-
       if (mounted) {
         setState(() {
           _currentAngles = extracted.angles;
@@ -175,15 +166,6 @@ class _CameraScreenState extends State<CameraScreen> {
 
           _tracker.update(extracted.angles, elapsed);
           _repCounter.update(extracted.angles, elapsed);
-
-          // Atualização das trilhas de movimento
-          final Map<String, Point2D?> trailPts = {
-            'LEFT_WRIST': extracted.landmarks['LEFT_WRIST'],
-            'RIGHT_WRIST': extracted.landmarks['RIGHT_WRIST'],
-            'LEFT_KNEE': extracted.landmarks['LEFT_KNEE'],
-            'RIGHT_KNEE': extracted.landmarks['RIGHT_KNEE'],
-          };
-          _motionTrail.update(trailPts);
 
           setState(() {
             _currentAngles = extracted.angles;
@@ -448,7 +430,6 @@ class _CameraScreenState extends State<CameraScreen> {
               painter: PosePainter(
                 anglesData: _currentAngles,
                 landmarks: _currentLandmarks,
-                motionTrail: _motionTrail,
                 activeExercise: _repCounter.config.name,
               ),
             ),
@@ -637,17 +618,6 @@ class _CameraScreenState extends State<CameraScreen> {
             onPressed: _openExerciseSelector,
           ),
 
-          // Ligar/Desligar Trilha (Comet Trail)
-          IconButton.filledTonal(
-            icon: Icon(_motionTrail.enabled ? Icons.blur_on : Icons.blur_off),
-            tooltip: 'Trilha de Movimento',
-            onPressed: () {
-              setState(() {
-                _motionTrail.toggle();
-              });
-            },
-          ),
-
           // Resetar
           IconButton.filledTonal(
             icon: const Icon(Icons.refresh),
@@ -656,7 +626,6 @@ class _CameraScreenState extends State<CameraScreen> {
               setState(() {
                 _tracker.resetAll();
                 _repCounter.reset();
-                _motionTrail.clear();
               });
             },
           ),
