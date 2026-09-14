@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ambientes virtuais
+venv/
+env/
+ENV/
+
+# Arquivos de saída e relatórios temporários
+*.csv
+relatorio_angulos.png
+test_*.png
+test_*.csv
+test_*.mp4
+
+# Modelos pesados do MediaPipe
+*.task
+
