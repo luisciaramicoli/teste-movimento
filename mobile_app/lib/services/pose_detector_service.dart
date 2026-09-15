@@ -7,6 +7,9 @@ class PoseDetectorService {
   late final PoseDetector _detector;
   bool isInitialized = false;
 
+  final Map<String, Point2D> _smoothedLandmarks = {};
+  final Map<String, double> _smoothedAngles = {};
+
   PoseDetectorService() {
     _detector = PoseDetector(
       options: PoseDetectorOptions(
@@ -21,6 +24,42 @@ class PoseDetectorService {
     return await _detector.processImage(inputImage);
   }
 
+  void resetSmoothing() {
+    _smoothedLandmarks.clear();
+    _smoothedAngles.clear();
+  }
+
+  Point2D _smoothPoint(String key, Point2D target) {
+    final prev = _smoothedLandmarks[key];
+    if (prev == null) {
+      _smoothedLandmarks[key] = target;
+      return target;
+    }
+    final dist = prev.distanceTo(target);
+    // Filtro passa-baixas adaptativo: suaviza micro-vibrações (ruído)
+    // e acompanha movimentos rápidos sem latência perceptível
+    final double alpha = dist > 40.0 ? 0.85 : (dist > 15.0 ? 0.70 : 0.50);
+    final double sx = prev.x + alpha * (target.x - prev.x);
+    final double sy = prev.y + alpha * (target.y - prev.y);
+    final smoothed = Point2D(sx, sy);
+    _smoothedLandmarks[key] = smoothed;
+    return smoothed;
+  }
+
+  double _smoothAngle(String key, double target) {
+    final prev = _smoothedAngles[key];
+    if (prev == null) {
+      _smoothedAngles[key] = target;
+      return target;
+    }
+    final diff = (target - prev).abs();
+    final double alpha = diff > 25.0 ? 0.85 : (diff > 8.0 ? 0.70 : 0.50);
+    final double smoothed = prev + alpha * (target - prev);
+    final rounded = double.parse(smoothed.toStringAsFixed(1));
+    _smoothedAngles[key] = rounded;
+    return rounded;
+  }
+
   void dispose() {
     _detector.close();
   }
@@ -31,7 +70,6 @@ class PoseDetectorService {
     required Size inputImageSize,
     required Size screenSize,
     bool isFrontCamera = false,
-    bool flipHorizontal = false,
   }) {
     final double scale = max(
       screenSize.width / inputImageSize.width,
@@ -44,15 +82,19 @@ class PoseDetectorService {
 
     Point2D? getPoint(PoseLandmarkType type) {
       final landmark = pose.landmarks[type];
-      if (landmark == null || landmark.likelihood < 0.35) return null;
+      if (landmark == null || landmark.likelihood < 0.30) {
+        _smoothedLandmarks.remove(type.name);
+        return null;
+      }
 
-      final double imgX = flipHorizontal ? (inputImageSize.width - landmark.x) : landmark.x;
+      // Coordenadas já alinhadas com o frame de exibição pelo ML Kit
+      final double imgX = landmark.x;
       final double imgY = landmark.y;
 
       final double x = imgX * scale + offsetX;
       final double y = imgY * scale + offsetY;
 
-      return Point2D(x, y);
+      return _smoothPoint(type.name, Point2D(x, y));
     }
 
     final Map<String, Point2D?> points = {
@@ -84,7 +126,8 @@ class PoseDetectorService {
       final ptC = points[c];
 
       if (ptA != null && ptB != null && ptC != null) {
-        final angle = calculateAngle(ptA, ptB, ptC);
+        final rawAngle = calculateAngle(ptA, ptB, ptC);
+        final angle = _smoothAngle(key, rawAngle);
         return JointAngleData(
           key: key,
           label: label,
@@ -93,6 +136,7 @@ class PoseDetectorService {
           isValid: true,
         );
       }
+      _smoothedAngles.remove(key);
       return JointAngleData(key: key, label: label, isValid: false);
     }
 

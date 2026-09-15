@@ -158,20 +158,9 @@ class PosePainter extends CustomPainter {
       // Se for um exercício específico e a articulação não for foco, omite o badge numérico para não poluir
       if (priorityJoints.isNotEmpty && !isPriority) return;
 
-      // Texto do ângulo em graus
-      final textSpan = TextSpan(
-        text: '${data.angle!.round()}°',
-        style: TextStyle(
-          color: isPriority ? const Color(0xFF00FF7F) : Colors.white70,
-          fontSize: isPriority ? 12.0 : 10.0,
-          fontWeight: FontWeight.bold,
-        ),
-      );
-
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-      )..layout();
+      // Texto do ângulo em graus (reutiliza TextPainter em cache)
+      final int angleInt = data.angle!.round();
+      final textPainter = _getTextPainter(angleInt, isPriority);
 
       const badgePadding = EdgeInsets.symmetric(horizontal: 5.0, vertical: 2.0);
       final badgeW = textPainter.width + badgePadding.horizontal;
@@ -189,6 +178,28 @@ class PosePainter extends CustomPainter {
         canvas,
         Offset(vOffset.dx + 8 + badgePadding.left, vOffset.dy - textPainter.height / 2),
       );
+    });
+  }
+
+  static final Map<int, TextPainter> _priorityTextPainters = {};
+  static final Map<int, TextPainter> _normalTextPainters = {};
+
+  static TextPainter _getTextPainter(int angle, bool isPriority) {
+    final cache = isPriority ? _priorityTextPainters : _normalTextPainters;
+    return cache.putIfAbsent(angle, () {
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: '$angle°',
+          style: TextStyle(
+            color: isPriority ? const Color(0xFF00FF7F) : Colors.white70,
+            fontSize: isPriority ? 12.0 : 10.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      return textPainter;
     });
   }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
@@ -33,11 +34,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   late final RepCounterService _repCounter;
   late final JointAngleTracker _tracker;
 
-  Map<String, JointAngleData> _currentAngles = {};
-  Map<String, Point2D> _currentLandmarks = {};
+  final ValueNotifier<ExtractedPoseData?> _poseNotifier = ValueNotifier<ExtractedPoseData?>(null);
+  final ValueNotifier<double> _fpsNotifier = ValueNotifier<double>(0.0);
+  Uint8List? _cachedNv21Buffer;
+
   double _fps = 0.0;
   int _frameCount = 0;
   DateTime _lastFpsTime = DateTime.now();
+  int _emptyPoseFrames = 0;
+
+  static const Map<DeviceOrientation, int> _orientations = {
+    DeviceOrientation.portraitUp: 0,
+    DeviceOrientation.landscapeLeft: 90,
+    DeviceOrientation.portraitDown: 180,
+    DeviceOrientation.landscapeRight: 270,
+  };
 
   bool _isMirror = true;
   bool _isSimulationMode = false;
@@ -77,10 +88,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.medium,
+        ResolutionPreset.low,
         enableAudio: false,
+        imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
       );
-
       await _cameraController!.initialize();
       if (!mounted) return;
 
@@ -141,11 +152,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _repCounter.update(extracted.angles, elapsed);
 
       if (mounted) {
-        setState(() {
-          _currentAngles = extracted.angles;
-          _currentLandmarks = extracted.landmarks;
-          _fps = 30.0;
-        });
+        _poseNotifier.value = extracted;
+        _fpsNotifier.value = 30.0;
       }
     });
   }
@@ -154,25 +162,31 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_isProcessingFrame) return;
     _isProcessingFrame = true;
 
+    final sw = Stopwatch()..start();
     try {
+      final t0 = sw.elapsedMilliseconds;
       final inputImage = _convertCameraImageToInputImage(image);
+      final tConvert = sw.elapsedMilliseconds - t0;
       if (inputImage == null) return;
 
-      final poses = await _poseService
-          .processImage(inputImage)
-          .timeout(const Duration(milliseconds: 300), onTimeout: () => []);
+      final t1 = sw.elapsedMilliseconds;
+      final poses = await _poseService.processImage(inputImage);
+      final tMlKit = sw.elapsedMilliseconds - t1;
+
       if (mounted) {
         _frameCount++;
-        if (_frameCount % 5 == 0) {
-          final now = DateTime.now();
-          final diff = now.difference(_lastFpsTime).inMilliseconds;
-          if (diff > 0) {
-            _fps = (5000.0 / diff).clamp(1.0, 60.0);
-          }
+        final now = DateTime.now();
+        final diff = now.difference(_lastFpsTime).inMilliseconds;
+        if (diff >= 500) {
+          _fps = (_frameCount * 1000.0 / diff).clamp(1.0, 60.0);
+          _frameCount = 0;
           _lastFpsTime = now;
+          _fpsNotifier.value = _fps;
+          debugPrint('PoseTracking: ${image.width}x${image.height} | FPS: ${_fps.toStringAsFixed(1)} | Convert: ${tConvert}ms | MLKit: ${tMlKit}ms');
         }
 
         if (poses.isNotEmpty) {
+          _emptyPoseFrames = 0;
           final pose = poses.first;
           final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
 
@@ -190,21 +204,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             inputImageSize: Size(rotatedWidth, rotatedHeight),
             screenSize: MediaQuery.of(context).size,
             isFrontCamera: isFront,
-            flipHorizontal: _isMirror,
           );
 
           _tracker.update(extracted.angles, elapsed);
           _repCounter.update(extracted.angles, elapsed);
 
-          setState(() {
-            _currentAngles = extracted.angles;
-            _currentLandmarks = extracted.landmarks;
-          });
+          _poseNotifier.value = extracted;
         } else {
-          setState(() {
-            _currentAngles = {};
-            _currentLandmarks = {};
-          });
+          _emptyPoseFrames++;
+          // Permite tolerância de até 6 frames consecutivos vazios para não piscar o esqueleto
+          if (_emptyPoseFrames > 6) {
+            _poseService.resetSmoothing();
+            if (_poseNotifier.value != null) {
+              _poseNotifier.value = null;
+            }
+          }
         }
       }
     } catch (e) {
@@ -221,22 +235,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     final sensorOrientation = camera.sensorOrientation;
 
     InputImageRotation? rotation;
-    switch (sensorOrientation) {
-      case 0:
-        rotation = InputImageRotation.rotation0deg;
-        break;
-      case 90:
-        rotation = InputImageRotation.rotation90deg;
-        break;
-      case 180:
-        rotation = InputImageRotation.rotation180deg;
-        break;
-      case 270:
-        rotation = InputImageRotation.rotation270deg;
-        break;
-      default:
-        rotation = InputImageRotation.rotation0deg;
+    if (Platform.isIOS) {
+      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
+    } else if (Platform.isAndroid) {
+      var rotationCompensation = _orientations[_cameraController!.value.deviceOrientation];
+      if (rotationCompensation != null) {
+        if (camera.lensDirection == CameraLensDirection.front) {
+          // Câmera frontal
+          rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
+        } else {
+          // Câmera traseira
+          rotationCompensation = (sensorOrientation - rotationCompensation + 360) % 360;
+        }
+        rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
+      }
     }
+    rotation ??= InputImageRotationValue.fromRawValue(sensorOrientation) ?? InputImageRotation.rotation0deg;
 
     final int width = image.width;
     final int height = image.height;
@@ -251,7 +265,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       if (image.planes.length == 1) {
         bytes = image.planes[0].bytes;
       } else {
-        final Uint8List nv21 = Uint8List(ySize + uvSize);
+        if (_cachedNv21Buffer == null || _cachedNv21Buffer!.length != ySize + uvSize) {
+          _cachedNv21Buffer = Uint8List(ySize + uvSize);
+        }
+        final Uint8List nv21 = _cachedNv21Buffer!;
         final Plane yPlane = image.planes[0];
         final Plane uPlane = image.planes[1];
         final Plane vPlane = image.planes[2];
@@ -260,38 +277,64 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         if (yPlane.bytesPerRow == width) {
           nv21.setRange(0, ySize, yPlane.bytes);
         } else {
+          final int yRowStride = yPlane.bytesPerRow;
+          final Uint8List yBytes = yPlane.bytes;
           for (int y = 0; y < height; y++) {
-            nv21.setRange(y * width, (y + 1) * width, yPlane.bytes, y * yPlane.bytesPerRow);
+            nv21.setRange(y * width, (y + 1) * width, yBytes, y * yRowStride);
           }
         }
 
-        // 2. Cópia dos planos UV (NV21 espera V seguido de U)
+        // 2. Cópia vetorizada dos planos UV (NV21 espera V seguido de U)
         final int vPixelStride = vPlane.bytesPerPixel ?? 1;
-        if (vPixelStride == 2 && vPlane.bytesPerRow == width && vPlane.bytes.length >= uvSize - 1) {
-          // Buffer entrelaçado VU contíguo
-          final int copyLen = min(uvSize, vPlane.bytes.length);
-          nv21.setRange(ySize, ySize + copyLen, vPlane.bytes);
+        if (vPixelStride == 2) {
+          // No Android Camera2 (YUV_420_888), com pixelStride == 2, os dados VU já estão intercalados em memória!
+          final int vRowStride = vPlane.bytesPerRow;
+          final Uint8List vBytes = vPlane.bytes;
+          final int vLen = vBytes.length;
+
+          if (vRowStride == width) {
+            // Buffer contíguo em uma única operação de cópia
+            final int copyLen = min(uvSize, vLen);
+            nv21.setRange(ySize, ySize + copyLen, vBytes);
+            if (copyLen < uvSize && uPlane.bytes.isNotEmpty) {
+              nv21[ySize + uvSize - 1] = uPlane.bytes.last;
+            }
+          } else {
+            // Cópia bloco por bloco linha a linha usando setRange (evita loop pixel a pixel)
+            final int halfHeight = height >> 1;
+            for (int y = 0; y < halfHeight; y++) {
+              final int srcOffset = y * vRowStride;
+              final int dstOffset = ySize + y * width;
+              final int available = vLen - srcOffset;
+              if (available <= 0) break;
+              final int bytesInRow = min(width, available);
+              nv21.setRange(dstOffset, dstOffset + bytesInRow, vBytes, srcOffset);
+              if (bytesInRow < width && uPlane.bytes.isNotEmpty && y == halfHeight - 1) {
+                nv21[dstOffset + width - 1] = uPlane.bytes.last;
+              }
+            }
+          }
         } else {
+          // Fallback para pixelStride == 1
           int uvIndex = ySize;
-          final int halfHeight = height ~/ 2;
-          final int halfWidth = width ~/ 2;
+          final int halfHeight = height >> 1;
+          final int halfWidth = width >> 1;
           final int uRowStride = uPlane.bytesPerRow;
           final int vRowStride = vPlane.bytesPerRow;
-          final int uPixelStride = uPlane.bytesPerPixel ?? 1;
-          final int vBytesLen = vPlane.bytes.length;
-          final int uBytesLen = uPlane.bytes.length;
+          final Uint8List uBytes = uPlane.bytes;
+          final Uint8List vBytes = vPlane.bytes;
+          final int uLen = uBytes.length;
+          final int vLen = vBytes.length;
 
           for (int y = 0; y < halfHeight; y++) {
             final int uRow = y * uRowStride;
             final int vRow = y * vRowStride;
             for (int x = 0; x < halfWidth; x++) {
-              final int vOffset = vRow + x * vPixelStride;
-              final int uOffset = uRow + x * uPixelStride;
-              if (uvIndex < nv21.length && vOffset < vBytesLen) {
-                nv21[uvIndex] = vPlane.bytes[vOffset];
+              if (vRow + x < vLen && uvIndex < nv21.length) {
+                nv21[uvIndex] = vBytes[vRow + x];
               }
-              if (uvIndex + 1 < nv21.length && uOffset < uBytesLen) {
-                nv21[uvIndex + 1] = uPlane.bytes[uOffset];
+              if (uRow + x < uLen && uvIndex + 1 < nv21.length) {
+                nv21[uvIndex + 1] = uBytes[uRow + x];
               }
               uvIndex += 2;
             }
@@ -310,7 +353,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         size: Size(width.toDouble(), height.toDouble()),
         rotation: rotation,
         format: format,
-        bytesPerRow: image.planes[0].bytesPerRow,
+        bytesPerRow: Platform.isAndroid ? width : image.planes[0].bytesPerRow,
       ),
     );
   }
@@ -319,19 +362,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_cameras.length < 2) return;
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
     _isMirror = _cameras[_selectedCameraIndex].lensDirection == CameraLensDirection.front;
+    _poseService.resetSmoothing();
 
     await _cameraController?.stopImageStream();
     await _cameraController?.dispose();
 
     _cameraController = CameraController(
       _cameras[_selectedCameraIndex],
-      ResolutionPreset.medium,
+      ResolutionPreset.low,
       enableAudio: false,
+      imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
     );
-
     await _cameraController!.initialize();
+
     _cameraController!.startImageStream(_processCameraFrame);
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   void _openExerciseSelector() {
@@ -404,6 +449,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _poseService.dispose();
+    _poseNotifier.dispose();
+    _fpsNotifier.dispose();
     super.dispose();
   }
 
@@ -411,10 +458,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_isSimulationMode) return;
 
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.paused) {
+      _stopCamera();
+    } else if (state == AppLifecycleState.resumed) {
       if (_cameraController == null || !_isCameraInitialized) {
         _initCamera();
       }
+    }
+  }
+
+  Future<void> _stopCamera() async {
+    final controller = _cameraController;
+    _cameraController = null;
+    if (mounted) {
+      setState(() {
+        _isCameraInitialized = false;
+      });
+    }
+    if (controller != null) {
+      try {
+        await controller.stopImageStream();
+      } catch (_) {}
+      await controller.dispose();
     }
   }
 
@@ -484,16 +549,25 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             )
           else
-            _buildCameraPreview(screenSize),
+            RepaintBoundary(
+              child: _buildCameraPreview(screenSize),
+            ),
 
-          // 2. CustomPainter com Esqueleto, Badges e Comet Trail
+          // 2. CustomPainter com Esqueleto e Badges
           Positioned.fill(
-            child: CustomPaint(
-              size: screenSize,
-              painter: PosePainter(
-                anglesData: _currentAngles,
-                landmarks: _currentLandmarks,
-                activeExercise: _repCounter.config.name,
+            child: RepaintBoundary(
+              child: ValueListenableBuilder<ExtractedPoseData?>(
+                valueListenable: _poseNotifier,
+                builder: (context, poseData, _) {
+                  return CustomPaint(
+                    size: screenSize,
+                    painter: PosePainter(
+                      anglesData: poseData?.angles ?? const {},
+                      landmarks: poseData?.landmarks ?? const {},
+                      activeExercise: _repCounter.config.name,
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -502,16 +576,26 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.only(top: 8.0, left: 12.0, right: 12.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildAnglesHud(),
-                  if (_repCounter.config.name != 'free')
-                    _buildRepCard()
-                  else
-                    _buildModeBadge(),
-                ],
+              child: ValueListenableBuilder<ExtractedPoseData?>(
+                valueListenable: _poseNotifier,
+                builder: (context, poseData, _) {
+                  return ValueListenableBuilder<double>(
+                    valueListenable: _fpsNotifier,
+                    builder: (context, fps, _) {
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _buildAnglesHud(poseData?.angles ?? const {}, fps),
+                          if (_repCounter.config.name != 'free')
+                            _buildRepCard()
+                          else
+                            _buildModeBadge(),
+                        ],
+                      );
+                    },
+                  );
+                },
               ),
             ),
           ),
@@ -526,7 +610,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
   }
 
-  Widget _buildAnglesHud() {
+  Widget _buildAnglesHud(Map<String, JointAngleData> angles, double fps) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -543,14 +627,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             children: [
               const Text('MONITOR', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold)),
               const SizedBox(width: 8),
-              Text('${_fps.toStringAsFixed(0)} FPS', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+              Text('${fps.toStringAsFixed(0)} FPS', style: const TextStyle(color: Colors.white70, fontSize: 10)),
             ],
           ),
           const SizedBox(height: 4),
-          _buildHudRow('Cotovelo', _currentAngles['cotovelo_esq']?.angle, _currentAngles['cotovelo_dir']?.angle),
-          _buildHudRow('Ombro', _currentAngles['ombro_esq']?.angle, _currentAngles['ombro_dir']?.angle),
-          _buildHudRow('Joelho', _currentAngles['joelho_esq']?.angle, _currentAngles['joelho_dir']?.angle),
-          _buildHudRow('Quadril', _currentAngles['quadril_esq']?.angle, _currentAngles['quadril_dir']?.angle),
+          _buildHudRow('Cotovelo', angles['cotovelo_esq']?.angle, angles['cotovelo_dir']?.angle),
+          _buildHudRow('Ombro', angles['ombro_esq']?.angle, angles['ombro_dir']?.angle),
+          _buildHudRow('Joelho', angles['joelho_esq']?.angle, angles['joelho_dir']?.angle),
+          _buildHudRow('Quadril', angles['quadril_esq']?.angle, angles['quadril_dir']?.angle),
         ],
       ),
     );
