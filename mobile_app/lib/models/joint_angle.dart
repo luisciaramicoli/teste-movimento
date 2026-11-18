@@ -3,8 +3,15 @@ import 'dart:math';
 class Point2D {
   final double x;
   final double y;
+  final double z;
+  final double confidence;
 
-  const Point2D(this.x, this.y);
+  const Point2D(
+    this.x,
+    this.y, {
+    this.z = 0.0,
+    this.confidence = 1.0,
+  });
 
   double distanceTo(Point2D other) {
     final dx = x - other.x;
@@ -47,10 +54,29 @@ class ExtractedPoseData {
   final Map<String, JointAngleData> angles;
   final Map<String, Point2D> landmarks;
 
+  /// Elevação estimada do calcanhar / panturrilha (0% = pé plano, 100% = plantiflexão máxima)
+  final double calfElevationLeftPct;
+  final double calfElevationRightPct;
+
+  /// Ângulo estimado de rotação do corpo em relação à câmera (0° = Frontal, 90° = Perfil/Sagital)
+  final double bodyOrientationAngle;
+  final String bodyOrientationLabel;
+
+  /// Em perfil: lado do corpo realmente voltado para a câmera ('LEFT'/'RIGHT'),
+  /// deduzido da direção do corpo. Null quando não aplicável ou indeterminado.
+  final String? visibleSide;
+
   const ExtractedPoseData({
     required this.angles,
     required this.landmarks,
+    this.calfElevationLeftPct = 0.0,
+    this.calfElevationRightPct = 0.0,
+    this.bodyOrientationAngle = 0.0,
+    this.bodyOrientationLabel = 'Frontal',
+    this.visibleSide,
   });
+
+  double get maxCalfElevationPct => max(calfElevationLeftPct, calfElevationRightPct);
 }
 
 class JointRecord {
@@ -101,6 +127,8 @@ class JointRecord {
 
 class JointAngleTracker {
   final Map<String, JointRecord> records = {};
+  double maxCalfElevationLeftPct = 0.0;
+  double maxCalfElevationRightPct = 0.0;
 
   JointAngleTracker() {
     _registerDefaultJoints();
@@ -116,6 +144,8 @@ class JointAngleTracker {
       'quadril_dir': 'Quadril Direito',
       'joelho_esq': 'Joelho Esquerdo',
       'joelho_dir': 'Joelho Direito',
+      'tornozelo_esq': 'Tornozelo / Panturrilha Esq.',
+      'tornozelo_dir': 'Tornozelo / Panturrilha Dir.',
     };
 
     defaultJoints.forEach((key, label) {
@@ -123,7 +153,12 @@ class JointAngleTracker {
     });
   }
 
-  void update(Map<String, JointAngleData> anglesData, double timestamp) {
+  void update(
+    Map<String, JointAngleData> anglesData,
+    double timestamp, {
+    double calfLeftPct = 0.0,
+    double calfRightPct = 0.0,
+  }) {
     anglesData.forEach((key, data) {
       if (data.isValid && data.angle != null) {
         if (!records.containsKey(key)) {
@@ -132,12 +167,20 @@ class JointAngleTracker {
         records[key]!.update(data.angle!, timestamp);
       }
     });
+
+    if (calfLeftPct > maxCalfElevationLeftPct) {
+      maxCalfElevationLeftPct = calfLeftPct;
+    }
+    if (calfRightPct > maxCalfElevationRightPct) {
+      maxCalfElevationRightPct = calfRightPct;
+    }
   }
 
   void resetAll() {
     for (final r in records.values) {
       r.reset();
     }
+    maxCalfElevationLeftPct = 0.0;
+    maxCalfElevationRightPct = 0.0;
   }
 }
-

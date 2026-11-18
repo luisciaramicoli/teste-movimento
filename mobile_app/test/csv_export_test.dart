@@ -8,7 +8,9 @@ void main() {
   test('valida código anônimo do voluntário (RF10)', () {
     expect(SessionCsvExporter.isValidVolunteerCode('V01'), isTrue);
     expect(SessionCsvExporter.isValidVolunteerCode(' v12 '), isTrue);
-    expect(SessionCsvExporter.isValidVolunteerCode('Joao'), isFalse);
+    expect(SessionCsvExporter.isValidVolunteerCode('João da Silva'), isTrue);
+    expect(SessionCsvExporter.normalizeCode('  maria   silva '), 'Maria Silva');
+    expect(SessionCsvExporter.isValidVolunteerCode('A'), isFalse);
     expect(SessionCsvExporter.isValidVolunteerCode(''), isFalse);
   });
 
@@ -46,10 +48,10 @@ void main() {
         '2026-11-13T10:00:00.000,V01,2. Abdução de Ombros (Braços em T),esquerdo,ombro,88.5,,20.0,90.0');
   });
 
-  test('rejeita código inválido', () {
+  test('rejeita nome inválido', () {
     expect(
       () => SessionCsvExporter.build(
-        volunteerCode: 'Maria',
+        volunteerCode: ' ',
         when: DateTime.now(),
         tracker: JointAngleTracker(),
         postures: const [],

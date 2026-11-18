@@ -6,7 +6,7 @@
     <uses-feature android:name="android.hardware.camera.autofocus" />
 
     <application
-        android:label="Movimento (ML Kit)"
+        android:label="Movement Biomechanics"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

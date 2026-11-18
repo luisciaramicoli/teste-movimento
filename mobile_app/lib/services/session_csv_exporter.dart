@@ -1,7 +1,7 @@
 import '../models/joint_angle.dart';
 import '../models/protocol_models.dart';
 
-/// Exportação de sessão em CSV (RF09) com identificação anônima (RF10).
+/// Exportação de sessão em CSV (RF09), identificando o voluntário pelo nome.
 ///
 /// Esquema (Plano de Ação v2 / 06_01 seção 6.4):
 /// data_hora, voluntario, movimento, lado, articulacao, angulo, confianca,
@@ -22,13 +22,22 @@ class SessionCsvExporter {
     'rom_max',
   ];
 
-  static final RegExp _codePattern = RegExp(r'^V\d{2,3}$');
+  /// Nome válido: 2 a 60 caracteres, só letras (com acento), números, espaço,
+  /// hífen, apóstrofo e ponto.
+  static final RegExp _namePattern =
+      RegExp(r"^[\p{L}\p{N}][\p{L}\p{N} .'\-]{1,59}$", unicode: true);
 
-  /// Código anônimo válido: V01, V02, ... (sem nome ou contato).
-  static bool isValidVolunteerCode(String code) =>
-      _codePattern.hasMatch(code.trim().toUpperCase());
+  static bool isValidVolunteerCode(String name) =>
+      _namePattern.hasMatch(normalizeCode(name));
 
-  static String normalizeCode(String code) => code.trim().toUpperCase();
+  /// Remove espaços extras e põe a inicial de cada palavra em maiúscula
+  /// ("  maria   silva " -> "Maria Silva"), para o mesmo nome sempre agrupar igual.
+  static String normalizeCode(String name) => name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .map((w) => w[0].toUpperCase() + w.substring(1))
+      .join(' ');
 
   static String _side(String jointKey) {
     if (jointKey.endsWith('_esq')) return 'esquerdo';
@@ -53,7 +62,7 @@ class SessionCsvExporter {
     required List<PostureEvaluationResult> postures,
   }) {
     if (!isValidVolunteerCode(volunteerCode)) {
-      throw ArgumentError('Código de voluntário inválido: use V01, V02...');
+      throw ArgumentError('Nome do voluntário inválido.');
     }
     final code = normalizeCode(volunteerCode);
     final stamp = when.toIso8601String();

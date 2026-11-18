@@ -59,10 +59,10 @@ class _ReportScreenState extends State<ReportScreen>
           content: TextField(
             controller: controller,
             autofocus: true,
-            textCapitalization: TextCapitalization.characters,
+            textCapitalization: TextCapitalization.words,
             decoration: InputDecoration(
-              labelText: 'Código do voluntário (ex.: V01)',
-              helperText: 'Sem nome ou contato',
+              labelText: 'Nome do voluntário',
+              hintText: 'Ex.: Maria Silva',
               errorText: error,
             ),
           ),
@@ -75,7 +75,7 @@ class _ReportScreenState extends State<ReportScreen>
                 if (SessionCsvExporter.isValidVolunteerCode(controller.text)) {
                   Navigator.pop(ctx, controller.text);
                 } else {
-                  setLocal(() => error = 'Use o formato V01, V02...');
+                  setLocal(() => error = 'Digite o nome do voluntário.');
                 }
               },
               child: const Text('Exportar'),
