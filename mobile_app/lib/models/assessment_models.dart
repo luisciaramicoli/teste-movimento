@@ -52,6 +52,9 @@ class MovementSpec {
   final String viewLabel;
   final CaptureView view;
   final String instruction;
+
+  /// Orientação falada: posição inicial, execução correta e erros a evitar.
+  final String voiceGuide;
   final int repetitions;
   final List<String> joints;
 
@@ -61,6 +64,7 @@ class MovementSpec {
     required this.viewLabel,
     required this.view,
     required this.instruction,
+    required this.voiceGuide,
     required this.joints,
     this.repetitions = 3,
   });
@@ -76,18 +80,13 @@ const List<MovementSpec> kProtocolMovements = [
         'Fique de frente para a câmera, em pé, com os braços ao lado do corpo. '
         'Eleve os dois braços lateralmente até a altura dos ombros e retorne. '
         'Realize 3 repetições.',
+    voiceGuide:
+        'Fique de frente para a câmera, em pé, com os pés na largura dos ombros '
+        'e os braços ao lado do corpo. Mantenha o tronco parado e os cotovelos '
+        'estendidos. Eleve os dois braços para os lados, até a altura dos ombros, '
+        'sem passar disso. Desça devagar, sem balançar o corpo. '
+        'Faça três repetições.',
     joints: kFrontalJoints,
-  ),
-  MovementSpec(
-    id: 'agachamento_perfil_esq',
-    title: 'Agachamento, perfil esquerdo',
-    viewLabel: 'Lado esquerdo voltado para a câmera',
-    view: CaptureView.profileLeft,
-    instruction:
-        'Posicione-se de perfil, com o lado esquerdo voltado para a câmera. '
-        'Estenda os braços à frente e agache até a profundidade confortável, '
-        'depois retorne. Realize 3 repetições.',
-    joints: kLeftJoints,
   ),
   MovementSpec(
     id: 'agachamento_perfil_dir',
@@ -98,6 +97,12 @@ const List<MovementSpec> kProtocolMovements = [
         'Posicione-se de perfil, com o lado direito voltado para a câmera. '
         'Estenda os braços à frente e agache até a profundidade confortável, '
         'depois retorne. Realize 3 repetições.',
+    voiceGuide:
+        'Vire de lado, com o lado direito voltado para a câmera. Pés na largura '
+        'dos ombros e braços estendidos à frente. Leve o quadril para trás e '
+        'dobre os joelhos, mantendo as costas retas, os calcanhares no chão e os '
+        'joelhos alinhados com os pés. Desça até a profundidade confortável e '
+        'suba devagar. Faça três repetições.',
     joints: kRightJoints,
   ),
 ];

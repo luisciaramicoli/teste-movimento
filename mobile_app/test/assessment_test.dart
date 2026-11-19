@@ -129,22 +129,22 @@ void main() {
       expect(avg, 96.0);
     });
 
-    test('agachamento de perfil usa o joelho do lado voltado à câmera', () {
+    test('agachamento de perfil usa o joelho direito', () {
       final t = RepTracker(kProtocolMovements[1]);
       var time = 0.0;
       for (final k in [170.0, 140.0, 105.0, 100.0, 150.0, 165.0]) {
         t.update({
-          'joelho_esq': k,
-          'quadril_esq': k - 20,
-          'tornozelo_esq': 80,
-          'ombro_esq': 85,
-          'joelho_dir': 170,
+          'joelho_dir': k,
+          'quadril_dir': k - 20,
+          'tornozelo_dir': 80,
+          'ombro_dir': 85,
+          'joelho_esq': 170,
         }, time);
         time += 0.4;
       }
       expect(t.reps.length, 1);
-      expect(t.reps.first.angles['joelho_esq'], 100.0);
-      expect(t.reps.first.angles.containsKey('joelho_dir'), isFalse);
+      expect(t.reps.first.angles['joelho_dir'], 100.0);
+      expect(t.reps.first.angles.containsKey('joelho_esq'), isFalse);
     });
 
     test('ignora movimento rápido demais e cancelamento zera a fase', () {

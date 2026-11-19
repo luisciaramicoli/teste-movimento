@@ -8,11 +8,11 @@ import '../services/assessment_history_store.dart';
 import '../services/framing_checker.dart';
 import '../services/pose_camera_session.dart';
 import '../services/rep_tracker.dart';
+import '../services/voice_service.dart';
 import '../theme/app_theme.dart';
-import 'assessment_summary.dart';
 import 'history_screen.dart';
 
-enum _Phase { instruction, capture, review, error }
+enum _Phase { instruction, capture, error }
 
 class _Live {
   final ExtractedPoseData? pose;
@@ -44,6 +44,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
   FramingStatus? _held;
   double? _badSince;
   FramingIssue? _lastHapticIssue;
+  final VoiceService _voice = VoiceService();
 
   /// Tempo contínuo dentro do enquadramento antes de iniciar a contagem.
   static const double _lockSeconds = 1.5;
@@ -85,6 +86,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     _camera = PoseCameraSession(onPose: _onPose, screenSize: () => _screen);
     _camera.paused = true;
     _startCamera();
+    _voice.speak(_spec.voiceGuide);
   }
 
   Future<void> _startCamera() async {
@@ -105,6 +107,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     _pulse.dispose();
     _camera.dispose();
     _live.dispose();
+    _voice.stop();
     super.dispose();
   }
 
@@ -148,6 +151,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     }
     if (!framing.isInside && framing.issue != _lastHapticIssue) {
       HapticFeedback.lightImpact();
+      if (framing.issue != null) _voice.speak(framing.message, interrupt: false);
     }
     _lastHapticIssue = framing.isInside ? null : framing.issue;
 
@@ -157,6 +161,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       if (!_locked && t - _insideSince! >= _lockSeconds) {
         _locked = true;
         HapticFeedback.selectionClick();
+        _voice.speak('Posição correta. Pode começar.', interrupt: false);
       }
     } else {
       _insideSince = null;
@@ -176,6 +181,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       if (_tracker.update(angles, t)) {
         HapticFeedback.mediumImpact();
         finished = _tracker.isComplete;
+        if (!finished) _voice.speak('${_tracker.reps.length}');
       }
     }
 
@@ -190,21 +196,19 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     if (finished) _finishMovement();
   }
 
+  /// Guarda o resultado e segue direto para o próximo movimento, sem pausa.
   void _finishMovement() {
     _camera.paused = true;
     _results.add(_tracker.toResult());
-    setState(() => _phase = _Phase.review);
-  }
-
-  Future<void> _next() async {
     if (_movementIndex < kProtocolMovements.length - 1) {
-      setState(() {
-        _movementIndex++;
-        _phase = _Phase.instruction;
-      });
-      return;
+      _movementIndex++;
+      _voice.speak('Movimento concluído. Próximo: ${_spec.title}. '
+          '${_spec.voiceGuide}');
+      _beginCapture();
+    } else {
+      _voice.speak('Avaliação concluída. Salvando.');
+      _save();
     }
-    await _save();
   }
 
   Future<void> _save() async {
@@ -262,15 +266,29 @@ class _AssessmentScreenState extends State<AssessmentScreen>
           _Phase.error => _buildError(),
           _Phase.instruction => _buildInstruction(),
           _Phase.capture => _buildCapture(),
-          _Phase.review => _buildReview(),
         },
       ),
     );
   }
 
-  Widget _stepHeader() => Text(
-      'MOVIMENTO ${_movementIndex + 1} DE ${kProtocolMovements.length}',
-      style: AppText.label);
+  Widget _stepHeader() => Row(children: [
+        Expanded(
+          child: Text(
+              'MOVIMENTO ${_movementIndex + 1} DE ${kProtocolMovements.length}',
+              style: AppText.label),
+        ),
+        _muteButton(),
+      ]);
+
+  Widget _muteButton() => IconButton(
+      visualDensity: VisualDensity.compact,
+      tooltip: _voice.enabled ? 'Silenciar voz' : 'Ativar voz',
+      onPressed: () {
+        setState(() => _voice.enabled = !_voice.enabled);
+        if (!_voice.enabled) _voice.stop();
+      },
+      icon: Icon(_voice.enabled ? Icons.volume_up : Icons.volume_off,
+          size: 20));
 
   Widget _buildError() => SafeArea(
         child: Padding(
@@ -435,6 +453,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
                   style: const TextStyle(
                       fontSize: 11, color: AppColors.textSecondary)),
             ),
+            _muteButton(),
             if (_camera.cameras.length > 1)
               IconButton(
                   visualDensity: VisualDensity.compact,
@@ -568,42 +587,4 @@ class _AssessmentScreenState extends State<AssessmentScreen>
           ]),
         ),
       );
-
-  Widget _buildReview() {
-    final result = _results.last;
-    final last = _movementIndex == kProtocolMovements.length - 1;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _stepHeader(),
-            const SizedBox(height: 6),
-            const Text('Movimento concluído', style: AppText.title),
-            const SizedBox(height: 16),
-            Expanded(
-              child: SingleChildScrollView(
-                  child: MovementResultCard(result: result)),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: _saving
-                  ? null
-                  : () {
-                      _results.removeLast();
-                      setState(() => _phase = _Phase.instruction);
-                    },
-              child: const Text('Repetir este movimento'),
-            ),
-            const SizedBox(height: 8),
-            FilledButton(
-              onPressed: _saving ? null : _next,
-              child: Text(last ? 'Salvar avaliação' : 'Próximo movimento'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

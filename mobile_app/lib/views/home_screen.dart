@@ -26,7 +26,7 @@ class HomeScreen extends StatelessWidget {
                   style: AppText.muted),
               const SizedBox(height: 32),
               const Divider(height: 1),
-              const _Row('Movimentos', 'Abdução de ombro; agachamento (perfil esquerdo e direito)'),
+              const _Row('Movimentos', 'Abdução de ombro; agachamento (perfil direito)'),
               const Divider(height: 1),
               const _Row('Repetições', '3 por movimento, com média por articulação'),
               const Divider(height: 1),

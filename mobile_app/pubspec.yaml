@@ -17,6 +17,7 @@ dependencies:
   camera_android: ^0.10.10
   camera_platform_interface: ^2.10.0
   shared_preferences: ^2.5.3
+  flutter_tts: 4.0.2
 
 dev_dependencies:
   flutter_test:
@@ -31,5 +32,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/gifs/
-    - assets/models/
 
