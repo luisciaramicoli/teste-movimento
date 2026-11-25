@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../flow.dart';
 import '../models/assessment_models.dart';
 import '../models/joint_angle.dart';
+import '../models/mobility_score.dart';
 import '../painters/assessment_overlay_painter.dart';
 import '../services/assessment_history_store.dart';
 import '../services/framing_checker.dart';
@@ -248,6 +249,8 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       volunteerCode: widget.volunteerCode,
       testNumber: widget.testNumber,
       movements: List.of(_results),
+      reference:
+          widget.fluxo.perfil?.referencia ?? MobilityReference.illustrative,
     );
     await AssessmentHistoryStore().add(record);
     widget.fluxo.resultado = record;

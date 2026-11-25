@@ -193,7 +193,8 @@ class PoseDetectorService {
     } else {
       if (orientation.$1 < 42.0) _diagonalMode = true;
     }
-    final bool isFrontalOrDiagonal = _diagonalMode;
+    // No teste de perfil não há escorço frontal: usa sempre o ângulo medido.
+    final bool isFrontalOrDiagonal = onlySide == null && _diagonalMode;
 
     // Em perfil, o lado oposto à câmera fica ocluído e o modelo "inventa" os
     // pontos dele (esqueleto bagunçado). Mantém só o lado visível.
@@ -373,10 +374,14 @@ class PoseDetectorService {
       ),
     );
 
-    final String leftAnkleVertex =
-        points['LEFT_HEEL'] != null ? 'LEFT_HEEL' : 'LEFT_ANKLE';
-    final String rightAnkleVertex =
-        points['RIGHT_HEEL'] != null ? 'RIGHT_HEEL' : 'RIGHT_ANKLE';
+    // Em perfil, o vértice é o tornozelo: a variação do ângulo acompanha a
+    // dorsiflexão e a linha de base não muda se o calcanhar sumir num quadro.
+    String ankleVertex(String side) =>
+        onlySide == null && points['${side}_HEEL'] != null
+            ? '${side}_HEEL'
+            : '${side}_ANKLE';
+    final String leftAnkleVertex = ankleVertex('LEFT');
+    final String rightAnkleVertex = ankleVertex('RIGHT');
 
     final double calfLeftPct = _calculateCalfElevationPct(
       isLeft: true,
@@ -548,7 +553,7 @@ class PoseDetectorService {
     if (score.abs() > 0.08 * torso) _headingRight = score > 0;
     final heading = _headingRight;
     if (heading == null) return null;
-    final String side = heading ? 'RIGHT' : 'LEFT';
+    final String side = heading ? 'LEFT' : 'RIGHT';
 
     // 2) Grupo mais próximo da câmera pela profundidade (menor z = mais perto).
     double? meanZ(String s) {

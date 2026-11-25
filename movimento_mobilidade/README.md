@@ -107,19 +107,20 @@ Future<void> avaliar(BuildContext context) async {
 | `context` | `BuildContext` | — | Usado para empilhar as telas no `Navigator` do app. |
 | `voluntario` | `String` | `'V00'` | Código anônimo do voluntário (V01, V02…); nomes lançam `ArgumentError`. Vai para o histórico e para o CSV. O número do teste é sequencial por voluntário (1, 2, 3…). |
 | `mostrarResultado` | `bool` | `true` | Se `false`, a tela de resultado não aparece e o fluxo fecha logo após o segundo movimento. |
-| `perfil` | `PerfilAvaliado?` | `null` | Dados do cabeçalho da tela de resultado (nota, idade, peso, alcance). Campos não informados aparecem como `--`. |
+| `perfil` | `PerfilAvaliado?` | `null` | Idade, peso e alcance do cabeçalho, referência do score e duração da Jornada. Campos exibidos não informados aparecem como `--`. |
 
 `PerfilAvaliado` tem os campos opcionais `idade` (`int`), `pesoKg` (`double`),
 `alcanceCm` (`double`), `alcanceTexto` (`String`, exibido no lugar de
-`alcanceCm`, ex.: `">24"`), `alcanceClassificacao` (`String`, ex.: `"Ruim"`) e
-`nota` (`double`, 0 a 10). A biblioteca **não calcula** esses valores: só os exibe.
+`alcanceCm`, ex.: `">24"`) e `alcanceClassificacao` (`String`, ex.: `"Ruim"`),
+além de `referencia` (`MobilityReference?`) e `jornadaMeses` (`int`, padrão 3).
+A nota não é informada pelo app: é calculada pela biblioteca.
 
 ```dart
 await MovimentoMobilidade.iniciarAvaliacao(
   context,
   voluntario: 'V01',
   perfil: const PerfilAvaliado(
-      idade: 25, pesoKg: 80, alcanceCm: 24, alcanceClassificacao: 'Ruim', nota: 5),
+      idade: 25, pesoKg: 80, alcanceCm: 24, alcanceClassificacao: 'Ruim'),
 );
 ```
 
@@ -244,21 +245,36 @@ if (todas.isNotEmpty) {
 
 No topo, o seletor **Última avaliação** lista as avaliações salvas do mesmo
 voluntário e troca a que está na tela (aparece só quando há mais de uma). Logo
-abaixo, dois cartões com o `PerfilAvaliado`: nota (`5/10 Atual`), idade e peso, e
-o alcance com sua classificação. Em seguida, uma barra por medida, nesta ordem: Ombro direito, Ombro esquerdo,
-Quadril, Coluna, Joelho direito, Joelho esquerdo, Tornozelo direito e Tornozelo
-esquerdo, numa escala de 0° a 180°. De onde vem cada valor:
+abaixo, dois cartões: score atual (inteiro), idade e peso, e o alcance com sua
+classificação. Depois, o resumo `Score 9 (8,7)` e a meta, e uma barra para cada
+uma das 5 articulações, com faixa, nota e meta em graus. A barra cheia equivale
+à referência.
 
-| Linha | Origem |
+### Score de Mobilidade
+
+`MobilityScore.fromRecord(avaliacao)` calcula:
+
+| Linha | Amplitude medida |
 | --- | --- |
 | Ombro direito / esquerdo | abdução (frontal) |
-| Quadril, Coluna, Joelho direito, Tornozelo direito | agachamento (perfil direito) |
-| Joelho esquerdo, Tornozelo esquerdo | abdução (frontal), a única vista em que o lado esquerdo aparece |
+| Quadril, Joelho | flexão no agachamento: `180° − ângulo interno` |
+| Tornozelo | dorsiflexão no agachamento: ângulo em pé − ângulo no ponto mais baixo |
 
-A cor é verde a partir de 135° e vermelha abaixo disso. **Esse limite é
-provisório** e não é um critério clínico validado. A Coluna não é classificada
-(barra neutra), pois não há limite definido. Use os ângulos retornados para sua
-própria interpretação.
+- **Faixa:** Adequada a partir de 90% da referência (R); Reduzida de 75% a 90%;
+  Limitada abaixo de 75%.
+- **Nota:** 10 em R ou acima; linear de 8 a 10 (90–100%), 4 a 8 (75–90%) e 0 a 4
+  (50–75%); 0 abaixo de 50%.
+- **Score:** média simples das 5 notas. Se faltar alguma medida, não há score.
+- **Meta:** +10% de R a cada 3 meses para quem está abaixo de R, sem passar de R,
+  com teto de +15% por Jornada (a confirmar).
+- **Assimetria:** alerta nos ombros com diferença de pelo menos 15% (sobre o lado
+  maior) e 10°. Não altera o score.
+
+**As referências padrão são ilustrativas** (ombro 150°, quadril 120°, joelho
+140°, tornozelo 35°). Passe as do perfil em `PerfilAvaliado.referencia`; a
+usada fica gravada em cada avaliação. Avaliações antigas não têm o ângulo do
+tornozelo em pé e ficam sem score. A flexão e a dorsiflexão ainda não foram
+validadas contra goniômetro.
 
 ## Estrutura do projeto
 

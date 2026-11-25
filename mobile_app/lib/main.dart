@@ -72,8 +72,7 @@ class _ExemploHomeState extends State<ExemploHome> {
             pesoKg: peso,
             alcanceCm: 24,
             alcanceTexto: '>24',
-            alcanceClassificacao: 'Ruim',
-            nota: 5));
+            alcanceClassificacao: 'Ruim'));
     if (mounted) setState(() => _ultima = r ?? _ultima);
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../flow.dart';
 import '../models/assessment_models.dart';
+import '../models/mobility_score.dart';
 import '../models/perfil_avaliado.dart';
 import '../services/assessment_csv.dart';
 import '../services/assessment_history_store.dart';
@@ -15,12 +16,22 @@ class _Fig {
   static const Color track = Color(0xFFE6E6E6);
   static const Color red = Color(0xFFE86969);
   static const Color green = Color(0xFF8BD44F);
+  static const Color amber = Color(0xFFF2B84B);
   static const Color text = Color(0xFF212121);
   static const double radius = 18;
 }
 
-/// Tela 4: resultado da avaliação — cabeçalho do avaliado e uma barra de ângulo
-/// por articulação.
+/// Número com 1 casa decimal e vírgula (detalhe e histórico).
+String _decimal(double v) => v.toStringAsFixed(1).replaceAll('.', ',');
+
+/// Graus com até 1 casa decimal ("120°", "132,7°").
+String _degrees(double v) => '${_decimal(v).replaceAll(RegExp(r',0$'), '')}°';
+
+/// Score no formato "9 (8,7)": inteiro e, entre parênteses, o detalhe.
+String _scoreText(double v) => '${v.round()} (${_decimal(v)})';
+
+/// Tela 4: resultado da avaliação — cabeçalho do avaliado, score, meta e uma
+/// barra por articulação.
 class ResultScreen extends StatefulWidget {
   final AssessmentRecord record;
 
@@ -82,8 +93,7 @@ class _KeyedImage extends StatelessWidget {
 
 /// Uma linha da tela: de onde vem o valor e onde cada elemento fica no cartão.
 class _RowSpec {
-  final String movement;
-  final String joint;
+  final MobilityJoint joint;
   final String label;
 
   /// Imagem da articulação e sua posição/tamanho no cartão (medidas do Figma).
@@ -102,7 +112,7 @@ class _RowSpec {
   /// Espaço até a próxima linha.
   final double gapAfter;
 
-  const _RowSpec(this.movement, this.joint, this.label,
+  const _RowSpec(this.joint, this.label,
       {required this.image,
       required this.imgLeft,
       required this.imgTop,
@@ -118,44 +128,29 @@ class _RowSpec {
 }
 
 class _ResultScreenState extends State<ResultScreen> {
-  /// Linhas na ordem da tela.
-  ///
-  /// Lado direito, quadril e coluna vêm do agachamento (perfil direito); os
-  /// ombros e o lado esquerdo de joelho/tornozelo vêm da abdução (frontal),
-  /// única vista em que o lado esquerdo aparece.
+  /// As 5 articulações do score, na ordem da tela. Os ombros vêm da abdução
+  /// (frontal); quadril, joelho e tornozelo, do agachamento de perfil.
   static const List<_RowSpec> _rows = [
-    _RowSpec('abducao_ombro', 'ombro_dir', 'Ombro direito',
+    _RowSpec(MobilityJoint.ombroDir, 'Ombro direito',
         image: 'assets/images/icone_ombro_dir.png',
         imgLeft: 4, imgTop: 0, imgW: 49, imgH: 53,
         valueLeft: 57, valueTop: 2, labelLeft: 148, labelTop: 17, gapAfter: 5),
-    _RowSpec('abducao_ombro', 'ombro_esq', 'Ombro esquerdo',
+    _RowSpec(MobilityJoint.ombroEsq, 'Ombro esquerdo',
         image: 'assets/images/icone_ombro_esq.png',
         imgLeft: 8, imgTop: 0, imgW: 49, imgH: 53,
         valueLeft: 57, valueTop: 2, labelLeft: 148, labelTop: 17, gapAfter: 26),
-    _RowSpec('agachamento_perfil_dir', 'quadril_dir', 'Quadril',
+    _RowSpec(MobilityJoint.quadril, 'Quadril',
         image: 'assets/images/icone_quadril.png', cropRight: 0.07,
         imgLeft: 3, imgTop: -1, imgW: 53, imgH: 53,
         valueLeft: 61, valueTop: 3, labelLeft: 151, labelTop: 18, gapAfter: 22),
-    _RowSpec('agachamento_perfil_dir', 'coluna', 'Coluna',
-        image: 'assets/images/icone_coluna.png',
-        imgLeft: 6, imgTop: 1, imgW: 43, imgH: 50,
-        valueLeft: 61, valueTop: 3, labelLeft: 151, labelTop: 18, gapAfter: 22),
-    _RowSpec('agachamento_perfil_dir', 'joelho_dir', 'Joelho direito',
+    _RowSpec(MobilityJoint.joelho, 'Joelho',
         image: 'assets/images/icone_joelho.png', flip: true,
         imgLeft: 6, imgTop: 5, imgW: 46, imgH: 46,
-        valueLeft: 57, valueTop: 2, labelLeft: 148, labelTop: 17, gapAfter: 5),
-    _RowSpec('abducao_ombro', 'joelho_esq', 'Joelho esquerdo',
-        image: 'assets/images/icone_joelho.png', flip: true,
-        imgLeft: 6, imgTop: 3, imgW: 46, imgH: 46,
         valueLeft: 57, valueTop: 2, labelLeft: 148, labelTop: 17, gapAfter: 22),
-    _RowSpec('agachamento_perfil_dir', 'tornozelo_dir', 'Tornozelo direito',
+    _RowSpec(MobilityJoint.tornozelo, 'Tornozelo',
         image: 'assets/images/icone_tornozelo.png',
         imgLeft: 6, imgTop: 4, imgW: 46, imgH: 46,
-        valueLeft: 57, valueTop: 2, labelLeft: 136, labelTop: 17, gapAfter: 5),
-    _RowSpec('abducao_ombro', 'tornozelo_esq', 'Tornozelo esquerdo',
-        image: 'assets/images/icone_tornozelo.png', flip: true,
-        imgLeft: 6, imgTop: 4, imgW: 46, imgH: 46,
-        valueLeft: 57, valueTop: 2, labelLeft: 137, labelTop: 17, gapAfter: 0),
+        valueLeft: 57, valueTop: 2, labelLeft: 136, labelTop: 17, gapAfter: 0),
   ];
 
   late AssessmentRecord _record = widget.record;
@@ -190,16 +185,26 @@ class _ResultScreenState extends State<ResultScreen> {
     if (index == 0) return 'Última avaliação';
     String p(int n) => n.toString().padLeft(2, '0');
     final d = r.createdAt;
-    return 'Teste ${r.testNumber} · ${p(d.day)}/${p(d.month)}/${d.year}';
+    final score = MobilityScore.fromRecord(r).score;
+    return 'Teste ${r.testNumber} · ${p(d.day)}/${p(d.month)}/${d.year}'
+        '${score == null ? '' : ' · ${_decimal(score)}'}';
   }
 
   @override
   Widget build(BuildContext context) {
+    final result = MobilityScore.fromRecord(_record);
+    final asymmetry = result.shoulderAsymmetry;
+    final months = _perfil.jornadaMeses;
     final rows = <Widget>[];
     for (final spec in _rows) {
-      final angle = _record.movement(spec.movement)?.averages[spec.joint];
-      if (angle == null) continue;
-      rows.add(_JointRow(spec: spec, angle: angle));
+      final joint = result.joint(spec.joint);
+      if (joint == null) continue;
+      rows.add(_JointRow(spec: spec, result: joint, months: months));
+      if (spec.joint == MobilityJoint.ombroEsq &&
+          asymmetry != null &&
+          asymmetry.alert) {
+        rows.add(_asymmetryAlert(asymmetry));
+      }
       if (spec.gapAfter > 0) rows.add(SizedBox(height: spec.gapAfter));
     }
     final selectedIndex = _history.indexWhere((r) => r.id == _record.id);
@@ -227,7 +232,9 @@ class _ResultScreenState extends State<ResultScreen> {
               children: [
                 Center(child: _historyPill(selectedIndex)),
                 const SizedBox(height: 23),
-                _header(),
+                _header(result.score),
+                const SizedBox(height: 10),
+                _scoreSummary(result, months),
                 const SizedBox(height: 23),
                 if (rows.isEmpty)
                   const Padding(
@@ -304,7 +311,70 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  Widget _header() {
+  Widget _asymmetryAlert(ShoulderAsymmetry a) => Container(
+        margin: const EdgeInsets.only(top: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+            color: _Fig.amber.withOpacity(0.22),
+            border: Border.all(color: _Fig.amber),
+            borderRadius: BorderRadius.circular(_Fig.radius)),
+        child: Row(children: [
+          const Icon(Icons.warning_amber_rounded, size: 20, color: _Fig.text),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text('Diferença de ${a.percent.round()}% entre os lados',
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: _Fig.text))),
+        ]),
+      );
+
+  /// Score e meta; explica quando o score não pode ser calculado.
+  Widget _scoreSummary(MobilityScore result, int months) {
+    final score = result.score;
+    final goal = result.goalScore(months);
+    const strong = TextStyle(
+        fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black);
+    const small = TextStyle(fontSize: 12, color: _Fig.text);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+          color: _Fig.card,
+          border: Border.all(color: _Fig.cardBorder),
+          borderRadius: BorderRadius.circular(_Fig.radius)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (score == null || goal == null) ...[
+          const Text('Score indisponível', style: strong),
+          const SizedBox(height: 4),
+          Text(
+              'Sem medida válida de: '
+              '${result.missing.map((j) => j.label).join(', ')}.',
+              style: small),
+        ] else
+          Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 4,
+              children: [
+                Text('Score ${_scoreText(score)}', style: strong),
+                Text(
+                    'Meta $months ${months == 1 ? 'mês' : 'meses'}: '
+                    '${_scoreText(goal)}',
+                    style: strong),
+              ]),
+        if (result.reference.provisional) ...[
+          const SizedBox(height: 6),
+          const Text(
+              'Referências provisórias (ilustrativas), ainda não separadas '
+              'por sexo e idade.',
+              style: small),
+        ],
+      ]),
+    );
+  }
+
+  Widget _header(double? score) {
     final p = _perfil;
     String n(num? v) =>
         v == null ? '--' : (v % 1 == 0 ? '${v.toInt()}' : v.toStringAsFixed(1));
@@ -360,7 +430,7 @@ class _ResultScreenState extends State<ResultScreen> {
           width: 46,
           height: 44,
           child: Center(
-            child: Text(n(p.nota),
+            child: Text(score == null ? '--' : '${score.round()}',
                 style: const TextStyle(
                     fontSize: 30,
                     fontWeight: FontWeight.w700,
@@ -543,20 +613,27 @@ class _PointerPainter extends CustomPainter {
 
 class _JointRow extends StatelessWidget {
   final _RowSpec spec;
-  final double angle;
-  const _JointRow({required this.spec, required this.angle});
-
-  /// Limite entre "abaixo" e "normal" (graus). Provisório.
-  static const double _threshold = 135;
+  final JointScore result;
+  final int months;
+  const _JointRow(
+      {required this.spec, required this.result, required this.months});
 
   static const TextStyle _zone = TextStyle(
       fontSize: 12, height: 14 / 12, color: _Fig.text);
 
   @override
   Widget build(BuildContext context) {
-    final good = angle >= _threshold;
-    final color = good ? _Fig.green : _Fig.red;
-    final frac = (angle / 180).clamp(0.0, 1.0);
+    final angle = result.angle;
+    final color = switch (result.band) {
+      MobilityBand.adequada => _Fig.green,
+      MobilityBand.reduzida => _Fig.amber,
+      MobilityBand.limitada => _Fig.red,
+    };
+    // Barra cheia = referência do perfil.
+    final frac = (angle / result.reference).clamp(0.0, 1.0);
+    final goal = result.atReference
+        ? 'Meta: manter'
+        : 'Meta: ${_degrees(result.goalAngle(months))}';
 
     return Container(
       height: 102,
@@ -642,13 +719,19 @@ class _JointRow extends StatelessWidget {
                 decoration: BoxDecoration(
                     color: color, borderRadius: BorderRadius.circular(9))),
           ),
-          const Positioned(left: 42, top: 76, child: Text('Abaixo', style: _zone)),
-          const Positioned(
-              left: 0,
-              right: 0,
-              top: 76,
-              child: Center(child: Text('Normal', style: _zone))),
-          const Positioned(right: 30, top: 76, child: Text('Acima', style: _zone)),
+          Positioned(
+            left: 14,
+            right: 10,
+            top: 76,
+            child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(result.band.label,
+                      style: _zone.copyWith(fontWeight: FontWeight.w700)),
+                  Text('Nota ${_decimal(result.grade)}', style: _zone),
+                  Text(goal, style: _zone),
+                ]),
+          ),
         ]);
       }),
     );

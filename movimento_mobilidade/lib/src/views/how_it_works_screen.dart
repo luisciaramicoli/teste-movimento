@@ -135,10 +135,13 @@ class _HowItWorksScreenState extends State<HowItWorksScreen> {
                         child: Padding(
                           padding: EdgeInsets.only(top: 6),
                           child: Text(
-                              '1) De frente: eleve os braços até a altura dos ombros.\n\n'
+                              '1) De frente: levante os braços acima da cabeça, '
+                              'esticados, movimentando apenas o ombro.\n\n'
                               '2) De perfil, com o lado direito para a câmera: '
-                              'agache com os braços estendidos à frente.\n\n'
-                              'São 3 repetições de cada.',
+                              'agache o máximo que conseguir, tentando não tirar '
+                              'o calcanhar do chão.\n\n'
+                              'São 3 repetições de cada. Se sentir dor, pare o '
+                              'movimento.',
                               style: _text),
                         ),
                       ),

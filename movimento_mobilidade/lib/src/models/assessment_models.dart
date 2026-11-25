@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import '../services/volunteer_code.dart';
+import 'mobility_score.dart';
 
 /// Vista da câmera exigida para o movimento.
 enum CaptureView { frontal, profileLeft, profileRight }
@@ -86,15 +87,14 @@ const List<MovementSpec> kProtocolMovements = [
     viewLabel: 'De frente para a câmera',
     view: CaptureView.frontal,
     instruction:
-        'Fique de frente para a câmera, em pé, com os braços ao lado do corpo. '
-        'Eleve os dois braços lateralmente até a altura dos ombros e retorne. '
+        'Se posicione de frente para o celular e levante os braços acima da '
+        'cabeça, mantendo o braço esticado e movimentando apenas o ombro. '
         'Realize 3 repetições.',
     voiceGuide:
-        'Fique de frente para a câmera, em pé, com os pés na largura dos ombros '
-        'e os braços ao lado do corpo. Mantenha o tronco parado e os cotovelos '
-        'estendidos. Eleve os dois braços para os lados, até a altura dos ombros, '
-        'sem passar disso. Desça devagar, sem balançar o corpo. '
-        'Faça três repetições.',
+        'Se posicione de frente para o celular e levante os braços pela lateral '
+        'do corpo até acima da cabeça, mantendo o braço esticado e movimentando '
+        'apenas o ombro. Mantenha o tronco reto. Se sentir dor, pare o '
+        'movimento. Faça três repetições.',
     joints: kFrontalJoints,
   ),
   MovementSpec(
@@ -103,15 +103,14 @@ const List<MovementSpec> kProtocolMovements = [
     viewLabel: 'Lado direito voltado para a câmera',
     view: CaptureView.profileRight,
     instruction:
-        'Posicione-se de perfil, com o lado direito voltado para a câmera. '
-        'Estenda os braços à frente e agache até a profundidade confortável, '
-        'depois retorne. Realize 3 repetições.',
+        'Se posicione de perfil, com o lado direito para a câmera, e agache o '
+        'máximo que conseguir, tentando não tirar o calcanhar do chão. '
+        'Realize 3 repetições.',
     voiceGuide:
-        'Vire de lado, com o lado direito voltado para a câmera. Pés na largura '
-        'dos ombros e braços estendidos à frente. Leve o quadril para trás e '
-        'dobre os joelhos, mantendo as costas retas, os calcanhares no chão e os '
-        'joelhos alinhados com os pés. Desça até a profundidade confortável e '
-        'suba devagar. Faça três repetições.',
+        'Se posicione de perfil, com o lado direito para a câmera. Comece em pé '
+        'e parado. Agache o máximo que conseguir, tentando não tirar o calcanhar '
+        'do chão, e suba devagar. Se sentir dor, pare o movimento. '
+        'Faça três repetições.',
     joints: kSquatJoints,
   ),
 ];
@@ -132,9 +131,13 @@ class RepMeasurement {
   final Map<String, double> maxAngles;
   final Map<String, double> confidences;
 
+  /// Ângulos em repouso (em pé) imediatamente antes da repetição.
+  final Map<String, double> restAngles;
+
   const RepMeasurement({
     required this.index,
     required this.angles,
+    this.restAngles = const {},
     this.minAngles = const {},
     this.maxAngles = const {},
     this.confidences = const {},
@@ -146,9 +149,10 @@ class RepMeasurement {
         'minAngles': minAngles,
         'maxAngles': maxAngles,
         'confidences': confidences,
+        'restAngles': restAngles,
       };
 
-  /// Registros antigos não têm mín./máx./confiança: ficam vazios.
+  /// Registros antigos não têm mín./máx./confiança/repouso: ficam vazios.
   factory RepMeasurement.fromJson(Map<String, dynamic> j) {
     Map<String, double> read(String key) => ((j[key] as Map?) ?? const {})
         .map((k, v) => MapEntry(k as String, (v as num).toDouble()));
@@ -158,6 +162,7 @@ class RepMeasurement {
       minAngles: read('minAngles'),
       maxAngles: read('maxAngles'),
       confidences: read('confidences'),
+      restAngles: read('restAngles'),
     );
   }
 }
@@ -235,12 +240,17 @@ class AssessmentRecord {
   final String engine;
   final List<MovementResult> movements;
 
+  /// Referência do perfil usada no score; fica gravada para o histórico não
+  /// mudar quando a tabela de referências mudar.
+  final MobilityReference reference;
+
   const AssessmentRecord({
     required this.id,
     required this.createdAt,
     required this.volunteerCode,
     required this.testNumber,
     required this.movements,
+    this.reference = MobilityReference.illustrative,
     this.engine = 'Google ML Kit Pose Detection (base)',
   });
 
@@ -258,6 +268,7 @@ class AssessmentRecord {
         'testNumber': testNumber,
         'engine': engine,
         'movements': movements.map((m) => m.toJson()).toList(),
+        'reference': reference.toJson(),
       };
 
   factory AssessmentRecord.fromJson(Map<String, dynamic> j) => AssessmentRecord(
@@ -269,6 +280,10 @@ class AssessmentRecord {
         movements: (j['movements'] as List)
             .map((e) => MovementResult.fromJson(Map<String, dynamic>.from(e)))
             .toList(),
+        reference: j['reference'] == null
+            ? MobilityReference.illustrative
+            : MobilityReference.fromJson(
+                Map<String, dynamic>.from(j['reference'] as Map)),
       );
 }
 

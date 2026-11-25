@@ -36,6 +36,7 @@ export 'src/models/assessment_models.dart'
         kProtocolMovements,
         jointLabel,
         stdDev;
+export 'src/models/mobility_score.dart';
 export 'src/models/perfil_avaliado.dart' show PerfilAvaliado;
 export 'src/services/volunteer_code.dart' show VolunteerCode;
 export 'src/views/camera_screen.dart' show CameraScreen;

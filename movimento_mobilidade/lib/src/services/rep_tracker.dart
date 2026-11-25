@@ -5,7 +5,7 @@ enum RepPhase { rest, active }
 /// Detecta repetições por histerese sobre um ângulo "condutor" e registra os
 /// ângulos de todas as articulações no instante de pico de cada repetição.
 ///
-/// - Abdução de ombro: condutor = média dos ombros (sobe de ~20° até ~90°).
+/// - Abdução de ombro: condutor = média dos ombros (sobe de ~20° até ~150°+).
 /// - Agachamento: condutor = joelho do lado visível (desce de ~170° até ~100°).
 class RepTracker {
   final MovementSpec spec;
@@ -14,6 +14,11 @@ class RepTracker {
 
   Map<String, double>? _peakAngles;
   Map<String, double> _peakConfidences = const {};
+  Map<String, double> _peakRest = const {};
+
+  // Últimos quadros em repouso: linha de base "em pé" de cada articulação.
+  final List<Map<String, double>> _restFrames = [];
+  static const int restWindow = 30;
 
   // Extremos desde o fim da repetição anterior (inclui a fase de repouso).
   final Map<String, double> _min = {};
@@ -69,9 +74,15 @@ class RepTracker {
     final bool better = _peakDriver == null ||
         (isAbduction ? d > _peakDriver! : d < _peakDriver!);
 
+    if (backToRest) {
+      _restFrames.add(_filtered(angles));
+      if (_restFrames.length > restWindow) _restFrames.removeAt(0);
+    }
+
     if (phase == RepPhase.rest) {
       if (reachedPeakZone) {
         phase = RepPhase.active;
+        _peakRest = _restBaseline();
         _activeSince = t;
         _peakDriver = d;
         _peakAngles = _filtered(angles);
@@ -101,7 +112,8 @@ class RepTracker {
             angles: snapshot!,
             minAngles: low,
             maxAngles: high,
-            confidences: _peakConfidences));
+            confidences: _peakConfidences,
+            restAngles: _peakRest));
         return true;
       }
     }
@@ -122,6 +134,18 @@ class RepTracker {
     _peakDriver = null;
     _min.clear();
     _max.clear();
+    _restFrames.clear();
+  }
+
+  /// Mediana por articulação dos quadros em repouso (resiste a ruído).
+  Map<String, double> _restBaseline() {
+    final out = <String, double>{};
+    for (final key in spec.joints) {
+      final v = [for (final f in _restFrames) if (f[key] != null) f[key]!]
+        ..sort();
+      if (v.isNotEmpty) out[key] = (v[(v.length - 1) ~/ 2] + v[v.length ~/ 2]) / 2;
+    }
+    return out;
   }
 
   Map<String, double> _filtered(Map<String, double> a) =>
