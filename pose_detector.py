@@ -1,10 +1,13 @@
 """
 pose_detector.py
 Módulo responsável pela detecção de articulações do corpo humano utilizando MediaPipe Pose
-(compatível com MediaPipe Tasks API moderna e MediaPipe Solutions clássico) e cálculo angular.
+(compatível com MediaPipe Tasks API moderna e MediaPipe Solutions clássico), cálculo angular
+de 10 articulações (incluindo Tornozelo/Panturrilha com Calcanhar e Ponta do Pé) e métricas de
+elevação da panturrilha e orientação corporal 3D/2D.
 """
 
 from typing import Dict, List, Optional, Tuple
+import math
 import os
 import urllib.request
 import numpy as np
@@ -41,7 +44,7 @@ def calculate_angle(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[flo
     return round(float(angle), 1)
 
 
-# Índices padrão de marcos anatômicos do MediaPipe Pose
+# Índices padrão de marcos anatômicos do MediaPipe Pose (33 pontos BlazePose)
 LANDMARKS = {
     "NOSE": 0,
     "LEFT_SHOULDER": 11,
@@ -56,6 +59,10 @@ LANDMARKS = {
     "RIGHT_KNEE": 26,
     "LEFT_ANKLE": 27,
     "RIGHT_ANKLE": 28,
+    "LEFT_HEEL": 29,
+    "RIGHT_HEEL": 30,
+    "LEFT_FOOT_INDEX": 31,
+    "RIGHT_FOOT_INDEX": 32,
 }
 
 # Definição das articulações a serem monitoradas:
@@ -69,6 +76,8 @@ JOINT_DEFINITIONS = {
     "quadril_dir": ("RIGHT_SHOULDER", "RIGHT_HIP", "RIGHT_KNEE", "Quadril Direito"),
     "joelho_esq": ("LEFT_HIP", "LEFT_KNEE", "LEFT_ANKLE", "Joelho Esquerdo"),
     "joelho_dir": ("RIGHT_HIP", "RIGHT_KNEE", "RIGHT_ANKLE", "Joelho Direito"),
+    "tornozelo_esq": ("LEFT_KNEE", "LEFT_HEEL", "LEFT_FOOT_INDEX", "Tornozelo / Panturrilha Esq."),
+    "tornozelo_dir": ("RIGHT_KNEE", "RIGHT_HEEL", "RIGHT_FOOT_INDEX", "Tornozelo / Panturrilha Dir."),
 }
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
@@ -76,7 +85,7 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pos
 
 class PoseDetector:
     """
-    Detector de pose baseado no MediaPipe Pose.
+    Detector de pose baseado no MediaPipe Pose (33 pontos).
     Compatível com MediaPipe Tasks API (moderno) e Solutions (legado).
     """
 
@@ -107,9 +116,7 @@ class PoseDetector:
 
             self.vision = vision
 
-            # Garante que o arquivo do modelo existe
             if not os.path.exists(model_path):
-                # Tenta procurar no mesmo diretório do arquivo atual
                 local_dir_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), model_path)
                 if os.path.exists(local_dir_path):
                     model_path = local_dir_path
@@ -177,10 +184,10 @@ class PoseDetector:
                 )
 
     def extract_landmarks(
-        self, results, frame_shape: Tuple[int, int, int], min_visibility: float = 0.5
+        self, results, frame_shape: Tuple[int, int, int], min_visibility: float = 0.45
     ) -> Dict[str, Dict]:
         """
-        Extrai as coordenadas em pixels e a visibilidade de cada marco anatômico relevante.
+        Extrai as coordenadas em pixels, coordenada Z e a visibilidade de cada marco anatômico relevante.
         """
         landmarks_dict = {}
         h, w, _ = frame_shape
@@ -201,14 +208,18 @@ class PoseDetector:
                 vis = getattr(lm, "visibility", None)
                 if vis is None:
                     vis = getattr(lm, "presence", 1.0)
-                is_valid = (vis is None) or (vis >= min_visibility)
+                # Tolerância ligeiramente menor para calcanhar e ponta do pé
+                threshold = min_visibility * 0.8 if ("HEEL" in name or "FOOT" in name) else min_visibility
+                is_valid = (vis is None) or (vis >= threshold)
 
                 px_x = int(lm.x * w)
                 px_y = int(lm.y * h)
+                z_val = float(getattr(lm, "z", 0.0))
 
                 landmarks_dict[name] = {
                     "pixel": (px_x, px_y),
                     "normalized": (lm.x, lm.y),
+                    "z": z_val,
                     "visibility": vis,
                     "valid": is_valid,
                 }
@@ -219,18 +230,29 @@ class PoseDetector:
         self, landmarks_dict: Dict[str, Dict]
     ) -> Dict[str, Dict]:
         """
-        Calcula os ângulos de todas as articulações definidas se os três pontos forem válidos.
+        Calcula os ângulos de todas as 10 articulações definidas se os três pontos forem válidos.
         """
         angles_result = {}
 
         for joint_key, (pt_a_name, pt_b_name, pt_c_name, label) in JOINT_DEFINITIONS.items():
+            actual_b_name = pt_b_name
+            # Fallback para ANKLE caso HEEL não esteja válido no frame
+            if joint_key == "tornozelo_esq" and (
+                "LEFT_HEEL" not in landmarks_dict or not landmarks_dict["LEFT_HEEL"].get("valid")
+            ):
+                actual_b_name = "LEFT_ANKLE"
+            elif joint_key == "tornozelo_dir" and (
+                "RIGHT_HEEL" not in landmarks_dict or not landmarks_dict["RIGHT_HEEL"].get("valid")
+            ):
+                actual_b_name = "RIGHT_ANKLE"
+
             if (
                 pt_a_name in landmarks_dict
-                and pt_b_name in landmarks_dict
+                and actual_b_name in landmarks_dict
                 and pt_c_name in landmarks_dict
             ):
                 lm_a = landmarks_dict[pt_a_name]
-                lm_b = landmarks_dict[pt_b_name]
+                lm_b = landmarks_dict[actual_b_name]
                 lm_c = landmarks_dict[pt_c_name]
 
                 if lm_a["valid"] and lm_b["valid"] and lm_c["valid"]:
@@ -243,7 +265,6 @@ class PoseDetector:
                     }
                     continue
 
-            # Caso não seja visível ou válido
             angles_result[joint_key] = {
                 "angle": None,
                 "vertex_px": None,
@@ -253,3 +274,75 @@ class PoseDetector:
 
         return angles_result
 
+    def calculate_calf_and_orientation_metrics(
+        self, landmarks_dict: Dict[str, Dict], angles_result: Dict[str, Dict]
+    ) -> Dict[str, object]:
+        """
+        Calcula a porcentagem de elevação da panturrilha (subida do calcanhar em relação à ponta do pé)
+        e estima o ângulo de orientação corporal 3D/2D (Frontal, Diagonal, Perfil).
+        """
+        def _side_calf_pct(knee_k: str, ankle_k: str, heel_k: str, foot_k: str, angle_k: str) -> float:
+            v_score = 0.0
+            a_score = 0.0
+            if (
+                knee_k in landmarks_dict and landmarks_dict[knee_k].get("valid")
+                and ankle_k in landmarks_dict and landmarks_dict[ankle_k].get("valid")
+                and heel_k in landmarks_dict and landmarks_dict[heel_k].get("valid")
+                and foot_k in landmarks_dict and landmarks_dict[foot_k].get("valid")
+            ):
+                kx, ky = landmarks_dict[knee_k]["pixel"]
+                ax, ay = landmarks_dict[ankle_k]["pixel"]
+                hx, hy = landmarks_dict[heel_k]["pixel"]
+                fx, fy = landmarks_dict[foot_k]["pixel"]
+                tibia_len = max(25.0, math.hypot(kx - ax, ky - ay))
+                heel_lift_px = float(fy - hy)
+                v_score = max(0.0, min(1.0, heel_lift_px / (tibia_len * 0.18))) * 100.0
+
+            ang_data = angles_result.get(angle_k)
+            if ang_data and ang_data.get("valid") and ang_data.get("angle") is not None:
+                a_score = max(0.0, min(1.0, (ang_data["angle"] - 105.0) / 40.0)) * 100.0
+
+            return round(max(v_score, v_score * 0.6 + a_score * 0.4), 1)
+
+        calf_left = _side_calf_pct("LEFT_KNEE", "LEFT_ANKLE", "LEFT_HEEL", "LEFT_FOOT_INDEX", "tornozelo_esq")
+        calf_right = _side_calf_pct("RIGHT_KNEE", "RIGHT_ANKLE", "RIGHT_HEEL", "RIGHT_FOOT_INDEX", "tornozelo_dir")
+
+        # Orientação corporal
+        yaw_deg = 0.0
+        yaw_label = "Frontal"
+        if (
+            "LEFT_SHOULDER" in landmarks_dict and landmarks_dict["LEFT_SHOULDER"].get("valid")
+            and "RIGHT_SHOULDER" in landmarks_dict and landmarks_dict["RIGHT_SHOULDER"].get("valid")
+            and "LEFT_HIP" in landmarks_dict and landmarks_dict["LEFT_HIP"].get("valid")
+            and "RIGHT_HIP" in landmarks_dict and landmarks_dict["RIGHT_HIP"].get("valid")
+        ):
+            ls = landmarks_dict["LEFT_SHOULDER"]
+            rs = landmarks_dict["RIGHT_SHOULDER"]
+            lh = landmarks_dict["LEFT_HIP"]
+            rh = landmarks_dict["RIGHT_HIP"]
+
+            shoulder_w = abs(ls["pixel"][0] - rs["pixel"][0])
+            mid_sy = (ls["pixel"][1] + rs["pixel"][1]) / 2.0
+            mid_hy = (lh["pixel"][1] + rh["pixel"][1]) / 2.0
+            torso_h = max(20.0, abs(mid_hy - mid_sy))
+
+            ratio = max(0.0, min(1.0, shoulder_w / (torso_h * 0.72)))
+            angle_2d = math.degrees(math.acos(ratio))
+            dz = abs(ls.get("z", 0.0) - rs.get("z", 0.0))
+            angle_3d = math.degrees(math.atan2(dz, max(0.05, abs(ls["normalized"][0] - rs["normalized"][0]))))
+            yaw_deg = round(max(0.0, min(90.0, angle_2d * 0.7 + angle_3d * 0.3)), 1)
+
+            if yaw_deg < 25.0:
+                yaw_label = "Frontal"
+            elif yaw_deg < 60.0:
+                yaw_label = "Diagonal"
+            else:
+                yaw_label = "Perfil"
+
+        return {
+            "calf_elevation_left_pct": calf_left,
+            "calf_elevation_right_pct": calf_right,
+            "max_calf_elevation_pct": max(calf_left, calf_right),
+            "body_orientation_angle": yaw_deg,
+            "body_orientation_label": yaw_label,
+        }

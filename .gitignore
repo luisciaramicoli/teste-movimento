@@ -17,6 +17,29 @@ test_*.png
 test_*.csv
 test_*.mp4
 
-# Modelos pesados do MediaPipe
+# Modelos pesados temporários
 *.task
+*.pt
+*.tflite
+/yolov8n-pose.onnx
 
+# Flutter / Gradle
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/android/.gradle/
+**/local.properties
+.idea/
+*.iml
+node_modules/
+
+# Imagens da biblioteca: não distribuídas no repositório público
+movimento_mobilidade/assets/images/*
+movimento_mobilidade/assets/gifs/*
+!movimento_mobilidade/assets/images/LEIA-ME.md
+!movimento_mobilidade/assets/gifs/LEIA-ME.md
+
+# Entregas acadêmicas (dados pessoais) e rascunhos
+/entregas/
+/scratch/

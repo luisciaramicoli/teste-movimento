@@ -1,7 +1,7 @@
 name: teste_movimento_app
-description: "Aplicativo móvel Flutter para rastreamento de articulações corporais, cálculo de ângulos e contador de repetições."
+description: "App de exemplo que consome a biblioteca movimento_mobilidade."
 publish_to: "none"
-version: 1.0.0+2002
+version: 1.0.1+2003
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -9,27 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  camera: ^0.11.0+1
-  google_mlkit_pose_detection: ^0.13.0
-  fl_chart: 0.68.0
-  permission_handler: ^11.3.1
   cupertino_icons: ^1.0.8
-  camera_android: ^0.10.10
-  camera_platform_interface: ^2.10.0
-  shared_preferences: ^2.5.3
-  flutter_tts: 4.0.2
+  movimento_mobilidade:
+    path: ../movimento_mobilidade
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
 
-dependency_overrides:
-  google_mlkit_pose_detection:
-    path: ./plugins/google_mlkit_pose_detection
-
 flutter:
   uses-material-design: true
-  assets:
-    - assets/gifs/
-

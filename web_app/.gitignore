@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.vercel/
+!public/pose_landmarker_lite.task
+public/wasm/
+.vercel

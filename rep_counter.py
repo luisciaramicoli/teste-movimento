@@ -99,6 +99,17 @@ EXERCISE_PRESETS: Dict[str, ExerciseConfig] = {
         instruction_down="Puxe o corpo até o queixo passar da barra",
         instruction_up="Desça de forma controlada",
     ),
+    "calf_raise": ExerciseConfig(
+        name="calf_raise",
+        display_name="Elevação de Panturrilha (Calf Raise)",
+        target_joints=["tornozelo_esq", "tornozelo_dir"],
+        start_threshold=105.0,  # Calcanhar no chão
+        peak_threshold=132.0,   # Na ponta dos pés (plantiflexão)
+        invert=False,           # Pico é um ângulo MAIOR
+        instruction_start="Apoie os calcanhares no solo para iniciar",
+        instruction_down="Suba na ponta dos pés contraindo a panturrilha",
+        instruction_up="Desça os calcanhares controladamente",
+    ),
 }
 
 

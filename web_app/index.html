@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#102620"><title>Teste Movimento · Avaliação de mobilidade</title><link rel="stylesheet" href="/style.css"></head>
+<body><header><div class="brand"><b aria-hidden="true">∿</b> Teste Movimento</div><nav aria-label="Principal"><button id="evaluation" aria-current="page">Avaliação</button><button id="history">Histórico</button></nav></header>
+<main><div class="heading"><div><small>LABORATÓRIO DE MOVIMENTO</small><h1 id="title">Avaliação de mobilidade</h1></div></div>
+<div id="session">
+<div class="workspace"><section class="monitor"><div class="monitorbar"><span id="monitor-title">Guia de movimento</span><span id="source">Simulação</span></div><div class="stage"><video playsinline muted hidden></video><canvas aria-label="Visualização do movimento e das articulações"></canvas></div><div class="readout"><span id="metric">Abdução de ombro</span><strong id="angle">—</strong></div></section>
+<aside><small>PROTOCOLO</small><h2 id="step">Nova avaliação</h2><p id="instruction">Realize três repetições de cada movimento. Use a câmera ou explore o protocolo com dados simulados.</p>
+<ol><li id="s0">Abdução de ombro <span>Frontal</span></li><li id="s1">Agachamento <span>Perfil direito</span></li></ol>
+<div id="setup"><label for="participant">Código do participante</label><input id="participant" value="V01" maxlength="32" autocomplete="off"><button class="primary" id="camera">Iniciar com câmera</button><button class="secondary" id="demo">Testar demonstração</button></div>
+<div id="controls" hidden><strong id="count"></strong><button id="stop" class="secondary">Encerrar sessão</button></div><p class="status" id="status" role="status"></p></aside></div>
+<p class="foot">Os quadros da câmera são processados no dispositivo. Os resultados ficam neste navegador.</p></div>
+<section id="records" hidden></section></main><script type="module" src="/app.js"></script></body></html>

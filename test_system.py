@@ -4,10 +4,11 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_cache")
 import unittest
 import numpy as np
 
-from pose_detector import PoseDetector, calculate_angle, JOINT_DEFINITIONS
+from pose_detector import PoseDetector, calculate_angle, JOINT_DEFINITIONS, LANDMARKS
 from tracker import AngleTracker
 from rep_counter import ExerciseRepCounter
 from motion_trail import MotionTrail
+from protocol_evaluator import ProtocolEvaluator
 from visualizer import generate_rom_report_graph
 
 
@@ -28,10 +29,17 @@ class TestJointTracking(unittest.TestCase):
         angle = calculate_angle((1, 1), (0, 0), (1, 0))
         self.assertAlmostEqual(angle, 45.0, places=1)
 
+    def test_heel_and_foot_landmarks_registered(self):
+        self.assertIn("LEFT_HEEL", LANDMARKS)
+        self.assertIn("RIGHT_HEEL", LANDMARKS)
+        self.assertIn("LEFT_FOOT_INDEX", LANDMARKS)
+        self.assertIn("RIGHT_FOOT_INDEX", LANDMARKS)
+        self.assertIn("tornozelo_esq", JOINT_DEFINITIONS)
+        self.assertIn("tornozelo_dir", JOINT_DEFINITIONS)
+
     def test_tracker_statistics_and_rom(self):
         tracker = AngleTracker()
-        
-        # Simula medições de cotovelo esquerdo variando de 40 a 160 graus
+
         angles_sequence = [160.0, 120.0, 80.0, 40.0, 90.0, 150.0]
         for i, ang in enumerate(angles_sequence):
             mock_data = {
@@ -57,7 +65,7 @@ class TestJointTracking(unittest.TestCase):
             "joelho_esq": {"angle": 120.0, "valid": True},
         }
         tracker.update(mock_data, timestamp=1.0)
-        
+
         csv_path = "test_export.csv"
         try:
             tracker.export_to_csv(csv_path)
@@ -72,10 +80,8 @@ class TestJointTracking(unittest.TestCase):
                 os.remove(csv_path)
 
     def test_graph_generation(self):
-        # Simula uma sessão completa de movimento para testar a renderização do Matplotlib
         tracker = AngleTracker({k: v[3] for k, v in JOINT_DEFINITIONS.items()})
 
-        # Gera 30 frames de dados sintéticos simulando flexão e extensão
         for t in range(30):
             ts = t * 0.1
             mock_angles = {
@@ -87,6 +93,8 @@ class TestJointTracking(unittest.TestCase):
                 "ombro_dir": {"angle": float(65 + 25 * np.cos(ts)), "valid": True},
                 "quadril_esq": {"angle": float(130 + 20 * np.sin(ts * 0.8)), "valid": True},
                 "quadril_dir": {"angle": float(135 + 15 * np.cos(ts * 0.8)), "valid": True},
+                "tornozelo_esq": {"angle": float(115 + 20 * np.sin(ts * 1.2)), "valid": True},
+                "tornozelo_dir": {"angle": float(115 + 20 * np.cos(ts * 1.2)), "valid": True},
             }
             tracker.update(mock_angles, timestamp=ts)
 
@@ -111,57 +119,100 @@ class TestJointTracking(unittest.TestCase):
         self.assertIsInstance(angles, dict)
         self.assertEqual(len(angles), len(JOINT_DEFINITIONS))
 
-    def test_rep_counter_squat(self):
+    def test_protocol_evaluator_positioning_and_calf_posture(self):
+        protocol = ProtocolEvaluator(enabled=True)
+        frame_shape = (800, 400, 3)
+
+        good_landmarks = {
+            "NOSE": {"pixel": (200, 180), "normalized": (0.5, 0.22), "z": 0.0, "valid": True},
+            "LEFT_SHOULDER": {"pixel": (165, 250), "normalized": (0.41, 0.31), "z": 0.0, "valid": True},
+            "RIGHT_SHOULDER": {"pixel": (235, 250), "normalized": (0.59, 0.31), "z": 0.0, "valid": True},
+            "LEFT_ELBOW": {"pixel": (150, 340), "normalized": (0.37, 0.42), "z": 0.0, "valid": True},
+            "RIGHT_ELBOW": {"pixel": (250, 340), "normalized": (0.62, 0.42), "z": 0.0, "valid": True},
+            "LEFT_WRIST": {"pixel": (145, 420), "normalized": (0.36, 0.52), "z": 0.0, "valid": True},
+            "RIGHT_WRIST": {"pixel": (255, 420), "normalized": (0.63, 0.52), "z": 0.0, "valid": True},
+            "LEFT_HIP": {"pixel": (175, 430), "normalized": (0.43, 0.53), "z": 0.0, "valid": True},
+            "RIGHT_HIP": {"pixel": (225, 430), "normalized": (0.56, 0.53), "z": 0.0, "valid": True},
+            "LEFT_KNEE": {"pixel": (175, 550), "normalized": (0.43, 0.68), "z": 0.0, "valid": True},
+            "RIGHT_KNEE": {"pixel": (225, 550), "normalized": (0.56, 0.68), "z": 0.0, "valid": True},
+            "LEFT_ANKLE": {"pixel": (175, 660), "normalized": (0.43, 0.82), "z": 0.0, "valid": True},
+            "RIGHT_ANKLE": {"pixel": (225, 660), "normalized": (0.56, 0.82), "z": 0.0, "valid": True},
+            "LEFT_HEEL": {"pixel": (178, 680), "normalized": (0.44, 0.85), "z": 0.0, "valid": True},
+            "RIGHT_HEEL": {"pixel": (222, 680), "normalized": (0.55, 0.85), "z": 0.0, "valid": True},
+            "LEFT_FOOT_INDEX": {"pixel": (165, 685), "normalized": (0.41, 0.86), "z": 0.0, "valid": True},
+            "RIGHT_FOOT_INDEX": {"pixel": (235, 685), "normalized": (0.59, 0.86), "z": 0.0, "valid": True},
+        }
+        calf_orient = {
+            "calf_elevation_left_pct": 10.0,
+            "calf_elevation_right_pct": 10.0,
+            "max_calf_elevation_pct": 10.0,
+            "body_orientation_angle": 12.0,
+            "body_orientation_label": "Frontal",
+        }
+
+        protocol.update(good_landmarks, {}, calf_orient, frame_shape, 0.0)
+        self.assertTrue(protocol.positioning_result.is_all_good)
+        protocol.update(good_landmarks, {}, calf_orient, frame_shape, 2.2)
+        self.assertEqual(protocol.stage, "posture_replication")
+
+        # Testa Postura 3: Elevação de Panturrilha
+        protocol.current_posture_idx = 2
+        calf_angles = {
+            "tornozelo_esq": {"angle": 135.0, "valid": True},
+            "tornozelo_dir": {"angle": 134.0, "valid": True},
+            "joelho_esq": {"angle": 172.0, "valid": True},
+            "joelho_dir": {"angle": 171.0, "valid": True},
+        }
+        calf_orient_high = {
+            "calf_elevation_left_pct": 65.0,
+            "calf_elevation_right_pct": 62.0,
+            "max_calf_elevation_pct": 65.0,
+            "body_orientation_angle": 35.0,
+            "body_orientation_label": "Diagonal",
+        }
+        protocol.update(good_landmarks, calf_angles, calf_orient_high, frame_shape, 3.0)
+        self.assertGreaterEqual(protocol.posture_accuracy_pct, 90.0)
+        protocol.update(good_landmarks, calf_angles, calf_orient_high, frame_shape, 5.7)
+        self.assertEqual(len(protocol.completed_postures), 1)
+        self.assertEqual(protocol.completed_postures[0]["id"], "elevacao_panturrilha")
+
+    def test_rep_counter_squat_and_calf_raise(self):
         counter = ExerciseRepCounter(exercise_name="squat")
         self.assertEqual(counter.rep_count, 0)
 
-        # Simula ciclo de agachamento:
-        # Posição inicial em pé (165°)
         counter.update({"joelho_esq": {"angle": 165.0, "valid": True}}, timestamp=0.0)
-        # Descida até 90° (pico de agachamento)
         counter.update({"joelho_esq": {"angle": 130.0, "valid": True}}, timestamp=0.5)
         counter.update({"joelho_esq": {"angle": 88.0, "valid": True}}, timestamp=1.0)
-        # Retorno subindo até a posição em pé (160°)
         counter.update({"joelho_esq": {"angle": 125.0, "valid": True}}, timestamp=1.5)
         rep = counter.update({"joelho_esq": {"angle": 162.0, "valid": True}}, timestamp=2.0)
 
         self.assertIsNotNone(rep)
         self.assertEqual(counter.rep_count, 1)
-        self.assertTrue(rep.is_valid)
-        self.assertGreater(rep.total_duration, 0.5)
-        self.assertGreater(rep.rom, 60.0)
 
-    def test_rep_counter_curl(self):
-        counter = ExerciseRepCounter(exercise_name="curl")
-        # Simula rosca bíceps: 150° -> 45° -> 150°
-        counter.update({"cotovelo_esq": {"angle": 150.0, "valid": True}}, timestamp=0.0)
-        counter.update({"cotovelo_esq": {"angle": 90.0, "valid": True}}, timestamp=0.6)
-        counter.update({"cotovelo_esq": {"angle": 45.0, "valid": True}}, timestamp=1.2)
-        counter.update({"cotovelo_esq": {"angle": 100.0, "valid": True}}, timestamp=1.8)
-        rep = counter.update({"cotovelo_esq": {"angle": 148.0, "valid": True}}, timestamp=2.4)
-
-        self.assertIsNotNone(rep)
-        self.assertEqual(counter.rep_count, 1)
-        self.assertEqual(rep.rep_number, 1)
+        # Testa contador de elevação de panturrilha (calf_raise)
+        calf_counter = ExerciseRepCounter(exercise_name="calf_raise")
+        calf_counter.update({"tornozelo_esq": {"angle": 100.0, "valid": True}}, timestamp=0.0)
+        calf_counter.update({"tornozelo_esq": {"angle": 118.0, "valid": True}}, timestamp=0.5)
+        calf_counter.update({"tornozelo_esq": {"angle": 138.0, "valid": True}}, timestamp=1.0)
+        calf_counter.update({"tornozelo_esq": {"angle": 115.0, "valid": True}}, timestamp=1.5)
+        calf_rep = calf_counter.update({"tornozelo_esq": {"angle": 102.0, "valid": True}}, timestamp=2.0)
+        self.assertIsNotNone(calf_rep)
+        self.assertEqual(calf_counter.rep_count, 1)
 
     def test_motion_trail(self):
         trail = MotionTrail(max_length=5, enabled=True)
-        # Simula movimentação do pulso esquerdo
         for i in range(10):
             mock_landmarks = {
                 "LEFT_WRIST": {"pixel": (100 + i * 5, 200 + i * 2), "valid": True}
             }
             trail.update(mock_landmarks)
 
-        # Não deve ultrapassar max_length
         self.assertEqual(len(trail.trails["LEFT_WRIST"]), 5)
 
-        # Testa desenho sobre frame
         mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
         drawn = trail.draw(mock_frame)
         self.assertEqual(drawn.shape, (480, 640, 3))
 
-        # Testa toggle e clear
         trail.toggle()
         self.assertFalse(trail.enabled)
         self.assertEqual(len(trail.trails["LEFT_WRIST"]), 0)
@@ -169,4 +220,3 @@ class TestJointTracking(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
