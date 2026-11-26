@@ -365,9 +365,9 @@ class _ResultScreenState extends State<ResultScreen> {
               ]),
         if (result.reference.provisional) ...[
           const SizedBox(height: 6),
-          const Text(
-              'Referências provisórias (ilustrativas), ainda não separadas '
-              'por sexo e idade.',
+          Text(
+              'Referências provisórias. '
+              '${result.reference.note ?? 'Valores ilustrativos.'}',
               style: small),
         ],
       ]),

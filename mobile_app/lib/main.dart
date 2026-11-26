@@ -36,6 +36,7 @@ class ExemploHome extends StatefulWidget {
 
 class _ExemploHomeState extends State<ExemploHome> {
   AssessmentRecord? _ultima;
+  Sexo? _sexo;
   final TextEditingController _idadeController =
       TextEditingController(text: '25');
   final TextEditingController _pesoController =
@@ -69,6 +70,7 @@ class _ExemploHomeState extends State<ExemploHome> {
         voluntario: codigo,
         perfil: PerfilAvaliado(
             idade: idade,
+            sexo: _sexo,
             pesoKg: peso,
             alcanceCm: 24,
             alcanceTexto: '>24',
@@ -102,6 +104,18 @@ class _ExemploHomeState extends State<ExemploHome> {
                 labelText: 'Idade (anos)',
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 12),
+            // Opcional: sem o sexo, o ombro usa uma referência ilustrativa.
+            SegmentedButton<Sexo>(
+              segments: [
+                for (final s in Sexo.values)
+                  ButtonSegment(value: s, label: Text(s.label)),
+              ],
+              selected: {if (_sexo != null) _sexo!},
+              emptySelectionAllowed: true,
+              onSelectionChanged: (v) =>
+                  setState(() => _sexo = v.isEmpty ? null : v.first),
             ),
             const SizedBox(height: 12),
             TextField(

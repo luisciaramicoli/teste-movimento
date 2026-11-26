@@ -19,10 +19,8 @@ enum _Phase { capture, error }
 class _Live {
   final ExtractedPoseData? pose;
   final FramingStatus framing;
-  final bool locked;
-  final double lockProgress;
   final int reps;
-  const _Live(this.pose, this.framing, this.locked, this.lockProgress, this.reps);
+  const _Live(this.pose, this.framing, this.reps);
 }
 
 /// Telas 2 e 3: "Passo 1 / 2" e "Passo 2 / 2". Card de demonstração em cima e
@@ -52,8 +50,13 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     'agachamento_perfil_dir': 'assets/images/agachamento.png',
   };
 
-  /// Tempo que um problema de enquadramento precisa persistir para ser exibido.
+  /// Tempo que um problema de enquadramento precisa persistir para ser avisado.
   static const double _warnDelay = 0.35;
+
+  /// Intervalo para repetir por voz um problema que continua. Não há aviso em
+  /// texto na tela.
+  static const double _warnRepeat = 7;
+  double _lastWarnAt = 0;
 
   late final AnimationController _pulse = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 700))
@@ -77,8 +80,6 @@ class _AssessmentScreenState extends State<AssessmentScreen>
           isInside: false,
           issue: FramingIssue.noPerson,
           message: 'Aguardando detecção.'),
-      false,
-      0,
       0));
 
   _Phase _phase = _Phase.capture;
@@ -148,7 +149,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       CaptureView.profileLeft => 'LEFT',
     };
     _camera.paused = false;
-    _live.value = _Live(null, _live.value.framing, false, 0, 0);
+    _live.value = _Live(null, _live.value.framing, 0);
     setState(() => _phase = _Phase.capture);
   }
 
@@ -172,9 +173,14 @@ class _AssessmentScreenState extends State<AssessmentScreen>
         _held = raw;
       }
     }
-    if (!framing.isInside && framing.issue != _lastHapticIssue) {
-      HapticFeedback.lightImpact();
-      if (framing.issue != null) _voice.speak(framing.message, interrupt: false);
+    if (!framing.isInside) {
+      final changed = framing.issue != _lastHapticIssue;
+      if (changed) HapticFeedback.lightImpact();
+      if (changed ||
+          (!_voice.isSpeaking && t - _lastWarnAt >= _warnRepeat)) {
+        _lastWarnAt = t;
+        _voice.speak(framing.message, interrupt: false);
+      }
     }
     _lastHapticIssue = framing.isInside ? null : framing.issue;
 
@@ -214,13 +220,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       }
     }
 
-    final progress = _locked
-        ? 1.0
-        : (_insideSince == null
-            ? 0.0
-            : ((t - _insideSince!) / _lockSeconds).clamp(0.0, 1.0));
-    _live.value =
-        _Live(pose, framing, _locked, progress, _tracker.reps.length);
+    _live.value = _Live(pose, framing, _tracker.reps.length);
 
     if (finished) _finishMovement();
   }
@@ -249,8 +249,10 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       volunteerCode: widget.volunteerCode,
       testNumber: widget.testNumber,
       movements: List.of(_results),
-      reference:
-          widget.fluxo.perfil?.referencia ?? MobilityReference.illustrative,
+      reference: widget.fluxo.perfil?.referencia ??
+          MobilityReference.forProfile(
+              idade: widget.fluxo.perfil?.idade,
+              sexo: widget.fluxo.perfil?.sexo),
     );
     await AssessmentHistoryStore().add(record);
     widget.fluxo.resultado = record;
@@ -400,27 +402,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       clipBehavior: Clip.antiAlias,
       child: asset == null
           ? const SizedBox.shrink()
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.asset(asset, package: kPackage, fit: BoxFit.contain),
-                Center(
-                  child: Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.55),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 36,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          : Image.asset(asset, package: kPackage, fit: BoxFit.contain),
     );
   }
 
@@ -447,15 +429,6 @@ class _AssessmentScreenState extends State<AssessmentScreen>
                     pulse: _pulse.value,
                   ),
                 ),
-              ),
-            ),
-            Positioned(
-              top: 10,
-              left: 10,
-              right: 10,
-              child: ValueListenableBuilder<_Live>(
-                valueListenable: _live,
-                builder: (_, live, __) => _statusBanner(live),
               ),
             ),
             Positioned(
@@ -487,126 +460,4 @@ class _AssessmentScreenState extends State<AssessmentScreen>
   /// Alertas usam sempre o vermelho da identidade visual.
   Color _alertColor(FramingIssue? issue) => AppColors.error;
 
-  /// Problemas que impedem a medição (pessoa ausente ou corpo cortado).
-  bool _isCritical(FramingIssue? issue) =>
-      issue == FramingIssue.noPerson || issue == FramingIssue.bodyCutOff;
-
-  IconData _alertIcon(FramingStatus f) => switch (f.issue) {
-        FramingIssue.noPerson => Icons.person_search,
-        FramingIssue.bodyCutOff => Icons.fit_screen,
-        FramingIssue.tooFar => Icons.zoom_in_map,
-        FramingIssue.tooClose => Icons.zoom_out_map,
-        FramingIssue.offCenter =>
-          f.horizontalOffset < 0 ? Icons.arrow_forward : Icons.arrow_back,
-        FramingIssue.wrongOrientation => Icons.rotate_90_degrees_ccw,
-        null => Icons.check_circle,
-      };
-
-  String _alertTitle(FramingStatus f) => switch (f.issue) {
-        FramingIssue.noPerson => 'Não encontramos você',
-        FramingIssue.bodyCutOff => 'Corpo cortado',
-        FramingIssue.tooFar => 'Chegue mais perto',
-        FramingIssue.tooClose => 'Afaste-se um pouco',
-        FramingIssue.offCenter => f.horizontalOffset < 0
-            ? 'Mova-se para a direita'
-            : 'Mova-se para a esquerda',
-        FramingIssue.wrongOrientation => 'Ajuste sua posição',
-        null => '',
-      };
-
-  Widget _statusBanner(_Live live) {
-    final f = live.framing;
-    final bool ok = f.isInside;
-
-    // Captura em andamento e tudo certo: só uma etiqueta discreta (pílula preta).
-    if (ok && live.locked) {
-      return Align(
-        alignment: Alignment.topCenter,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-              color: Colors.black, borderRadius: BorderRadius.circular(40)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 14,
-              height: 14,
-              decoration: const BoxDecoration(
-                  color: AppColors.error, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 8),
-            const Text('Gravando',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5)),
-          ]),
-        ),
-      );
-    }
-
-    final String title = ok ? 'Ótimo, fique parado' : _alertTitle(f);
-    final String detail = ok ? 'Iniciando a captura…' : f.message;
-    final bool critical = !ok && _isCritical(f.issue);
-
-    // Cartão no estilo dos cards da identidade visual (corpo cinza claro #F3F3F3, borda #B9B9B9).
-    final Color badgeBg = ok
-        ? AppColors.ok
-        : (critical ? AppColors.alertBg : const Color(0xFFF3F3F3));
-    final Color badgeFg = ok
-        ? Colors.black
-        : (critical ? AppColors.alertText : Colors.black);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(10, 10, 14, 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F3F3),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFB9B9B9)),
-      ),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(color: badgeBg, shape: BoxShape.circle),
-            child: Icon(_alertIcon(f), size: 30, color: badgeFg),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(
-                        color: Colors.black,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        height: 1.15)),
-                const SizedBox(height: 2),
-                Text(detail,
-                    style: const TextStyle(
-                        color: Color(0xFF212121),
-                        fontSize: 18,
-                        height: 1.25)),
-              ],
-            ),
-          ),
-        ]),
-        if (ok) ...[
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: live.lockProgress,
-              minHeight: 5,
-              color: AppColors.ok,
-              backgroundColor: const Color(0xFFE6E6E6),
-            ),
-          ),
-        ],
-      ]),
-    );
-  }
 }

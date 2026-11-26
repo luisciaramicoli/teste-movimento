@@ -112,7 +112,8 @@ Future<void> avaliar(BuildContext context) async {
 `PerfilAvaliado` tem os campos opcionais `idade` (`int`), `pesoKg` (`double`),
 `alcanceCm` (`double`), `alcanceTexto` (`String`, exibido no lugar de
 `alcanceCm`, ex.: `">24"`) e `alcanceClassificacao` (`String`, ex.: `"Ruim"`),
-além de `referencia` (`MobilityReference?`) e `jornadaMeses` (`int`, padrão 3).
+além de `sexo` (`Sexo?`), `referencia` (`MobilityReference?`) e `jornadaMeses`
+(`int`, padrão 3).
 A nota não é informada pelo app: é calculada pela biblioteca.
 
 ```dart
@@ -270,9 +271,19 @@ uma das 5 articulações, com faixa, nota e meta em graus. A barra cheia equival
 - **Assimetria:** alerta nos ombros com diferença de pelo menos 15% (sobre o lado
   maior) e 10°. Não altera o score.
 
-**As referências padrão são ilustrativas** (ombro 150°, quadril 120°, joelho
-140°, tornozelo 35°). Passe as do perfil em `PerfilAvaliado.referencia`; a
-usada fica gravada em cada avaliação. Avaliações antigas não têm o ângulo do
+**As referências padrão são provisórias** (`MobilityReference.forProfile`):
+
+| Articulação | Referência |
+| --- | --- |
+| Ombros | Média de abdução ativa por sexo, faixa etária e lado ([Gill et al., 2020](https://doi.org/10.1186/s12891-020-03665-9), CC BY 4.0). Sem sexo ou idade, ou abaixo de 20 anos: 150° (ilustrativo). |
+| Quadril, joelho | 124,6° e 125,2°: médias do lado direito no ponto mais profundo ([Endo et al., 2020](https://doi.org/10.1589/jpts.32.391)), para todos os perfis. |
+| Tornozelo | 35° (ilustrativo). |
+
+Limitações: R é uma **média**, não a amplitude completa. O estudo de
+agachamento tem só 9 homens de 18,3 anos, feito com braços elevados, e mede o
+quadril em relação à pelve; o app mede em relação ao tronco. O estudo do ombro
+usou inclinômetro. Para usar outros valores, passe `PerfilAvaliado.referencia`.
+A usada fica gravada em cada avaliação. Avaliações antigas não têm o ângulo do
 tornozelo em pé e ficam sem score. A flexão e a dorsiflexão ainda não foram
 validadas contra goniômetro.
 

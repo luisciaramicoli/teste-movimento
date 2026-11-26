@@ -1,4 +1,5 @@
 import 'mobility_score.dart';
+import 'reference_norms.dart';
 
 /// Dados do avaliado: cabeçalho da tela de resultado, referência e meta.
 ///
@@ -20,8 +21,11 @@ class PerfilAvaliado {
   /// Classificação do alcance exibida na etiqueta (ex.: "Ruim", "Bom").
   final String? alcanceClassificacao;
 
-  /// Referência de amplitude do perfil (sexo e idade). Se `null`, a avaliação
-  /// usa [MobilityReference.illustrative].
+  /// Sexo, usado com a [idade] (a do início da Jornada) para a referência.
+  final Sexo? sexo;
+
+  /// Referência de amplitude própria. Se `null`, a avaliação usa
+  /// [MobilityReference.forProfile] com [idade] e [sexo].
   final MobilityReference? referencia;
 
   /// Duração da Jornada em meses, usada na meta.
@@ -29,6 +33,7 @@ class PerfilAvaliado {
 
   const PerfilAvaliado({
     this.idade,
+    this.sexo,
     this.pesoKg,
     this.alcanceCm,
     this.alcanceTexto,

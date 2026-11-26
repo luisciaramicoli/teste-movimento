@@ -38,6 +38,7 @@ export 'src/models/assessment_models.dart'
         stdDev;
 export 'src/models/mobility_score.dart';
 export 'src/models/perfil_avaliado.dart' show PerfilAvaliado;
+export 'src/models/reference_norms.dart' show Sexo, ShoulderNorm, shoulderNorm;
 export 'src/services/volunteer_code.dart' show VolunteerCode;
 export 'src/views/camera_screen.dart' show CameraScreen;
 export 'src/views/report_screen.dart' show ReportScreen;

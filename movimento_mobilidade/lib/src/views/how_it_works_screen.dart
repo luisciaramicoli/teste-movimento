@@ -114,20 +114,16 @@ class _HowItWorksScreenState extends State<HowItWorksScreen> {
                       SizedBox(
                         width: _imgCol,
                         height: 113,
-                        child: Center(
-                          child: Transform.scale(
-                            scale: 1.2,
-                            // Multiplica pelo fundo da tela: o branco da foto some.
-                            child: ColorFiltered(
-                              colorFilter: const ColorFilter.mode(
-                                  _bg, BlendMode.multiply),
-                              child: Image.asset('assets/images/abducao.png',
-                                  package: kPackage,
-                                  width: _imgCol,
-                                  height: 109,
-                                  fit: BoxFit.contain),
-                            ),
-                          ),
+                        // Multiplica pelo fundo da tela: o branco da foto some.
+                        child: ColorFiltered(
+                          colorFilter: const ColorFilter.mode(
+                              _bg, BlendMode.multiply),
+                          // A imagem tem duas posições; mostra só a de braços
+                          // erguidos, à direita.
+                          child: Image.asset('assets/images/abducao.png',
+                              package: kPackage,
+                              fit: BoxFit.cover,
+                              alignment: const Alignment(0.73, 0)),
                         ),
                       ),
                       const SizedBox(width: _gap),

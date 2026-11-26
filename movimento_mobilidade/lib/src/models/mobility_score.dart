@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'assessment_models.dart';
+import 'reference_norms.dart';
 
 /// Regras do score de Mobilidade (coletânea de regras, seções 2 a 6).
 ///
@@ -31,7 +32,8 @@ enum MobilityBand {
 
 /// Referência R de cada articulação para o perfil do aluno, em graus.
 class MobilityReference {
-  final double ombro;
+  final double ombroDir;
+  final double ombroEsq;
   final double quadril;
   final double joelho;
   final double tornozelo;
@@ -39,41 +41,93 @@ class MobilityReference {
   /// True enquanto os valores não forem a tabela oficial por sexo e idade.
   final bool provisional;
 
+  /// Origem dos valores, exibida na tela de resultado.
+  final String? note;
+
   const MobilityReference({
-    required this.ombro,
+    required this.ombroDir,
+    required this.ombroEsq,
     required this.quadril,
     required this.joelho,
     required this.tornozelo,
     this.provisional = false,
-  }) : assert(ombro > 0 && quadril > 0 && joelho > 0 && tornozelo > 0);
+    this.note,
+  }) : assert(ombroDir > 0 &&
+            ombroEsq > 0 &&
+            quadril > 0 &&
+            joelho > 0 &&
+            tornozelo > 0);
 
-  /// Valores só ilustrativos, até a tabela por perfil chegar.
+  static const double _illustrativeShoulder = 150;
+  static const double _illustrativeAnkle = 35;
+
+  /// Valores só ilustrativos, os mesmos dos exemplos da coletânea de regras.
+  /// Também é a referência das avaliações salvas sem referência.
   static const MobilityReference illustrative = MobilityReference(
-      ombro: 150, quadril: 120, joelho: 140, tornozelo: 35, provisional: true);
+      ombroDir: _illustrativeShoulder,
+      ombroEsq: _illustrativeShoulder,
+      quadril: 120,
+      joelho: 140,
+      tornozelo: _illustrativeAnkle,
+      provisional: true);
+
+  /// Referência provisória para o perfil: ombro pela média de sexo e idade
+  /// (ilustrativo se faltar dado ou abaixo de 20 anos), quadril e joelho pelo
+  /// estudo de agachamento e tornozelo ilustrativo.
+  factory MobilityReference.forProfile({int? idade, Sexo? sexo}) {
+    final norm =
+        idade == null || sexo == null ? null : shoulderNorm(idade, sexo);
+    final String shoulderNote;
+    if (norm != null) {
+      shoulderNote = 'Ombro: média por sexo e idade (Gill et al., 2020).';
+    } else if (idade != null && sexo != null) {
+      shoulderNote = 'Ombro: ilustrativo (o estudo começa aos 20 anos).';
+    } else {
+      shoulderNote = 'Ombro: ilustrativo (faltam sexo ou idade).';
+    }
+    return MobilityReference(
+      ombroDir: norm?.right ?? _illustrativeShoulder,
+      ombroEsq: norm?.left ?? _illustrativeShoulder,
+      quadril: kSquatHipFlexionNorm,
+      joelho: kSquatKneeFlexionNorm,
+      tornozelo: _illustrativeAnkle,
+      provisional: true,
+      note: '$shoulderNote Quadril e joelho: Endo et al., 2020 (9 homens de '
+          '18 anos). Tornozelo: ilustrativo.',
+    );
+  }
 
   double of(MobilityJoint joint) => switch (joint) {
-        MobilityJoint.ombroDir || MobilityJoint.ombroEsq => ombro,
+        MobilityJoint.ombroDir => ombroDir,
+        MobilityJoint.ombroEsq => ombroEsq,
         MobilityJoint.quadril => quadril,
         MobilityJoint.joelho => joelho,
         MobilityJoint.tornozelo => tornozelo,
       };
 
   Map<String, dynamic> toJson() => {
-        'ombro': ombro,
+        'ombroDir': ombroDir,
+        'ombroEsq': ombroEsq,
         'quadril': quadril,
         'joelho': joelho,
         'tornozelo': tornozelo,
         'provisional': provisional,
+        'note': note,
       };
 
-  factory MobilityReference.fromJson(Map<String, dynamic> j) =>
-      MobilityReference(
-        ombro: (j['ombro'] as num).toDouble(),
-        quadril: (j['quadril'] as num).toDouble(),
-        joelho: (j['joelho'] as num).toDouble(),
-        tornozelo: (j['tornozelo'] as num).toDouble(),
-        provisional: (j['provisional'] as bool?) ?? false,
-      );
+  /// Registros da versão anterior tinham um único valor `ombro`.
+  factory MobilityReference.fromJson(Map<String, dynamic> j) {
+    double shoulder(String key) => ((j[key] ?? j['ombro']) as num).toDouble();
+    return MobilityReference(
+      ombroDir: shoulder('ombroDir'),
+      ombroEsq: shoulder('ombroEsq'),
+      quadril: (j['quadril'] as num).toDouble(),
+      joelho: (j['joelho'] as num).toDouble(),
+      tornozelo: (j['tornozelo'] as num).toDouble(),
+      provisional: (j['provisional'] as bool?) ?? false,
+      note: j['note'] as String?,
+    );
+  }
 }
 
 /// Absorve o erro de ponto flutuante nos cortes (ex.: exatamente 90% de R).

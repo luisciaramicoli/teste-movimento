@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:movimento_mobilidade/src/models/assessment_models.dart';
 import 'package:movimento_mobilidade/src/models/mobility_score.dart';
+import 'package:movimento_mobilidade/src/models/reference_norms.dart';
 import 'package:movimento_mobilidade/src/services/rep_tracker.dart';
 
 /// Os valores esperados são os exemplos da coletânea de regras.
@@ -79,7 +80,11 @@ void main() {
         volunteerCode: 'V01',
         testNumber: 1,
         reference: const MobilityReference(
-            ombro: 160, quadril: 100, joelho: 125, tornozelo: 20),
+            ombroDir: 160,
+            ombroEsq: 160,
+            quadril: 100,
+            joelho: 125,
+            tornozelo: 20),
         movements: const [
           MovementResult(movementId: 'abducao_ombro', reps: [
             RepMeasurement(
@@ -103,7 +108,7 @@ void main() {
       MobilityJoint.joelho: 128,
       MobilityJoint.tornozelo: 30,
     });
-    expect(back.reference.ombro, 160);
+    expect(back.reference.ombroDir, 160);
     expect(MobilityScore.fromRecord(back).score, 10);
   });
 
@@ -127,6 +132,57 @@ void main() {
     });
     expect(mobilityAngles(old), isEmpty);
     expect(old.reference.provisional, isTrue);
+  });
+
+  test('referência do ombro segue sexo, faixa etária e lado', () {
+    final man = MobilityReference.forProfile(idade: 34, sexo: Sexo.masculino);
+    expect([man.ombroDir, man.ombroEsq], [157.0, 156.1]);
+    expect(shoulderNorm(35, Sexo.masculino)!.right, 155.1);
+    expect(shoulderNorm(20, Sexo.feminino)!.right, 156.4);
+    expect(shoulderNorm(84, Sexo.feminino)!.left, 115.0);
+    expect(shoulderNorm(95, Sexo.feminino)!.right, 119.5);
+    expect(shoulderNorm(19, Sexo.feminino), isNull);
+  });
+
+  test('quadril e joelho usam o estudo de agachamento em todo perfil', () {
+    for (final r in [
+      MobilityReference.forProfile(),
+      MobilityReference.forProfile(idade: 70, sexo: Sexo.feminino),
+    ]) {
+      expect([r.quadril, r.joelho, r.tornozelo], [124.6, 125.2, 35]);
+      expect(r.provisional, isTrue);
+    }
+  });
+
+  test('sem sexo ou abaixo de 20 anos o ombro fica ilustrativo e avisa', () {
+    final noSex = MobilityReference.forProfile(idade: 30);
+    expect(noSex.ombroDir, 150);
+    expect(noSex.note, contains('faltam sexo ou idade'));
+    final young =
+        MobilityReference.forProfile(idade: 15, sexo: Sexo.masculino);
+    expect(young.ombroEsq, 150);
+    expect(young.note, contains('20 anos'));
+  });
+
+  test('cada ombro é avaliado contra a sua referência', () {
+    final s = MobilityScore.fromAngles({
+      MobilityJoint.ombroDir: 140,
+      MobilityJoint.ombroEsq: 140,
+    }, reference: MobilityReference.forProfile(idade: 30, sexo: Sexo.masculino));
+    expect(s.joint(MobilityJoint.ombroDir)!.reference, 157.0);
+    expect(s.joint(MobilityJoint.ombroEsq)!.reference, 156.1);
+    expect(s.joint(MobilityJoint.ombroDir)!.band, MobilityBand.reduzida);
+    expect(s.joint(MobilityJoint.ombroDir)!.grade, closeTo(7.8, 0.05));
+  });
+
+  test('lê referência salva com um único valor de ombro', () {
+    final old = MobilityReference.fromJson(
+        {'ombro': 150, 'quadril': 120, 'joelho': 140, 'tornozelo': 35});
+    expect([old.ombroDir, old.ombroEsq], [150, 150]);
+    final back = MobilityReference.fromJson(
+        MobilityReference.forProfile(idade: 50, sexo: Sexo.feminino).toJson());
+    expect([back.ombroDir, back.ombroEsq], [151.4, 149.3]);
+    expect(back.note, contains('Gill'));
   });
 
   test('RepTracker guarda o tornozelo em pé como linha de base', () {

@@ -8,6 +8,8 @@ class VoiceService {
   bool _speaking = false;
   String? _pending;
 
+  bool get isSpeaking => _speaking;
+
   Future<void> _init() async {
     if (_ready) return;
     _ready = true;
