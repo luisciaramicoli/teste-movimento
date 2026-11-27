@@ -34,7 +34,7 @@ void main() {
   });
 
   test('score é a média simples das 5 notas', () {
-    final s = MobilityScore.fromAngles(example);
+    final s = MobilityScore.fromAngles(example, reference: MobilityReference.illustrative);
     expect(s.score, closeTo(8.7, 0.05));
     expect(s.score!.round(), 9);
     expect(s.joint(MobilityJoint.tornozelo)!.band, MobilityBand.reduzida);
@@ -49,7 +49,7 @@ void main() {
   });
 
   test('meta de 1, 3 e 6 meses', () {
-    final s = MobilityScore.fromAngles(example);
+    final s = MobilityScore.fromAngles(example, reference: MobilityReference.illustrative);
     expect(s.goalScore(1), closeTo(9.1, 0.05));
     expect(s.goalScore(3), closeTo(9.8, 0.05));
     expect(s.goalScore(6), closeTo(10, 1e-6));
@@ -134,41 +134,92 @@ void main() {
     expect(old.reference.provisional, isTrue);
   });
 
-  test('referência do ombro segue sexo, faixa etária e lado', () {
-    final man = MobilityReference.forProfile(idade: 34, sexo: Sexo.masculino);
-    expect([man.ombroDir, man.ombroEsq], [157.0, 156.1]);
-    expect(shoulderNorm(35, Sexo.masculino)!.right, 155.1);
-    expect(shoulderNorm(20, Sexo.feminino)!.right, 156.4);
-    expect(shoulderNorm(84, Sexo.feminino)!.left, 115.0);
-    expect(shoulderNorm(95, Sexo.feminino)!.right, 119.5);
-    expect(shoulderNorm(19, Sexo.feminino), isNull);
-  });
-
-  test('quadril e joelho usam o estudo de agachamento em todo perfil', () {
+  test('referência padrão independe do sexo e da idade', () {
     for (final r in [
       MobilityReference.forProfile(),
+      MobilityReference.forProfile(idade: 15, sexo: Sexo.masculino),
       MobilityReference.forProfile(idade: 70, sexo: Sexo.feminino),
     ]) {
-      expect([r.quadril, r.joelho, r.tornozelo], [124.6, 125.2, 35]);
-      expect(r.provisional, isTrue);
+      expect(r.provisional, isFalse);
+      expect([r.ombroDir, r.ombroEsq, r.quadril, r.joelho, r.tornozelo],
+          [150.6, 148.7, 124.6, 125.2, 25.9]);
     }
   });
 
-  test('sem sexo ou abaixo de 20 anos o ombro fica ilustrativo e avisa', () {
-    final noSex = MobilityReference.forProfile(idade: 30);
-    expect(noSex.ombroDir, 150);
-    expect(noSex.note, contains('faltam sexo ou idade'));
-    final young =
-        MobilityReference.forProfile(idade: 15, sexo: Sexo.masculino);
-    expect(young.ombroEsq, 150);
-    expect(young.note, contains('20 anos'));
+  test('mobilityJointReps extrai cada repetição convertida em amplitude', () {
+    final record = AssessmentRecord(
+      id: 'reps-1',
+      createdAt: DateTime(2026, 11, 25),
+      volunteerCode: 'V02',
+      testNumber: 1,
+      movements: const [
+        MovementResult(movementId: 'abducao_ombro', reps: [
+          RepMeasurement(index: 1, angles: {'ombro_dir': 148.2}),
+          RepMeasurement(index: 2, angles: {'ombro_dir': 152.6}),
+        ]),
+        MovementResult(movementId: 'agachamento_perfil_dir', reps: [
+          RepMeasurement(
+            index: 1,
+            angles: {'joelho_dir': 60.0, 'tornozelo_dir': 92.0},
+            restAngles: {'tornozelo_dir': 120.0},
+          ),
+          RepMeasurement(
+            index: 2,
+            angles: {'joelho_dir': 55.0, 'tornozelo_dir': 88.0},
+            restAngles: {'tornozelo_dir': 121.0},
+          ),
+        ]),
+      ],
+    );
+    expect(mobilityJointReps(record, MobilityJoint.ombroDir), [
+      (index: 1, angle: 148.2),
+      (index: 2, angle: 152.6),
+    ]);
+    expect(mobilityJointReps(record, MobilityJoint.joelho), [
+      (index: 1, angle: 120.0),
+      (index: 2, angle: 125.0),
+    ]);
+    expect(mobilityJointReps(record, MobilityJoint.tornozelo), [
+      (index: 1, angle: 28.0),
+      (index: 2, angle: 33.0),
+    ]);
+  });
+
+  test('nota do tornozelo usa a referência salva em cada avaliação', () {
+    final record = AssessmentRecord(
+      id: 'tornozelo',
+      createdAt: DateTime(2026, 11, 26),
+      volunteerCode: 'V01',
+      testNumber: 1,
+      movements: const [
+        MovementResult(movementId: 'agachamento_perfil_dir', reps: [
+          RepMeasurement(index: 1, angles: {'tornozelo_dir': 74.1},
+              restAngles: {'tornozelo_dir': 100}),
+        ]),
+      ],
+    );
+    JointScore ankle(Map<String, dynamic> json) =>
+        MobilityScore.fromRecord(AssessmentRecord.fromJson(json))
+            .joint(MobilityJoint.tornozelo)!;
+    final current = ankle(record.toJson());
+    expect(current.angle, 25.9);
+    expect(current.grade, 10);
+    expect(current.band, MobilityBand.adequada);
+    final previous = ankle({...record.toJson(),
+      'reference': MobilityReference.illustrative.toJson(),
+    });
+    expect(previous.reference, 35);
+    expect(previous.band, MobilityBand.limitada);
   });
 
   test('cada ombro é avaliado contra a sua referência', () {
     final s = MobilityScore.fromAngles({
       MobilityJoint.ombroDir: 140,
       MobilityJoint.ombroEsq: 140,
-    }, reference: MobilityReference.forProfile(idade: 30, sexo: Sexo.masculino));
+    }, reference: MobilityReference.fromJson({
+      'ombroDir': 157.0, 'ombroEsq': 156.1, 'quadril': 124.6,
+      'joelho': 125.2, 'tornozelo': 35,
+    }));
     expect(s.joint(MobilityJoint.ombroDir)!.reference, 157.0);
     expect(s.joint(MobilityJoint.ombroEsq)!.reference, 156.1);
     expect(s.joint(MobilityJoint.ombroDir)!.band, MobilityBand.reduzida);
@@ -181,8 +232,8 @@ void main() {
     expect([old.ombroDir, old.ombroEsq], [150, 150]);
     final back = MobilityReference.fromJson(
         MobilityReference.forProfile(idade: 50, sexo: Sexo.feminino).toJson());
-    expect([back.ombroDir, back.ombroEsq], [151.4, 149.3]);
-    expect(back.note, contains('Gill'));
+    expect([back.ombroDir, back.ombroEsq], [150.6, 148.7]);
+    expect(back.note, contains('padrão'));
   });
 
   test('RepTracker guarda o tornozelo em pé como linha de base', () {

@@ -91,10 +91,8 @@ const List<MovementSpec> kProtocolMovements = [
         'cabeça, mantendo o braço esticado e movimentando apenas o ombro. '
         'Realize 3 repetições.',
     voiceGuide:
-        'Se posicione de frente para o celular e levante os braços pela lateral '
-        'do corpo até acima da cabeça, mantendo o braço esticado e movimentando '
-        'apenas o ombro. Mantenha o tronco reto. Se sentir dor, pare o '
-        'movimento. Faça três repetições.',
+        'De frente. Levante os braços esticados, pelos lados, até acima da '
+        'cabeça. Três vezes.',
     joints: kFrontalJoints,
   ),
   MovementSpec(
@@ -107,10 +105,8 @@ const List<MovementSpec> kProtocolMovements = [
         'máximo que conseguir, tentando não tirar o calcanhar do chão. '
         'Realize 3 repetições.',
     voiceGuide:
-        'Se posicione de perfil, com o lado direito para a câmera. Comece em pé '
-        'e parado. Agache o máximo que conseguir, tentando não tirar o calcanhar '
-        'do chão, e suba devagar. Se sentir dor, pare o movimento. '
-        'Faça três repetições.',
+        'Lado direito para a câmera. Comece parado, em pé. Agache o máximo, '
+        'com os calcanhares no chão. Três vezes.',
     joints: kSquatJoints,
   ),
 ];
@@ -237,6 +233,10 @@ class AssessmentRecord {
   final DateTime createdAt;
   final String volunteerCode;
   final int testNumber;
+  final int? idade;
+  final double? pesoKg;
+  final int? jornadaMeses;
+  /// Motor(es) de pose que processaram os quadros medidos.
   final String engine;
   final List<MovementResult> movements;
 
@@ -250,9 +250,44 @@ class AssessmentRecord {
     required this.volunteerCode,
     required this.testNumber,
     required this.movements,
-    this.reference = MobilityReference.illustrative,
-    this.engine = 'Google ML Kit Pose Detection (base)',
+    this.idade,
+    this.pesoKg,
+    this.jornadaMeses,
+    this.reference = MobilityReference.standard,
+    this.engine = unknownEngine,
   });
+
+  static const String unknownEngine = 'Não informado';
+
+  /// Textos que versões anteriores gravavam em toda avaliação, qualquer que
+  /// fosse o motor usado.
+  static const Set<String> _unreliableEngines = {
+    'Google ML Kit Pose Detection (base)',
+    'Google ML Kit Pose Detection',
+  };
+
+  static String _readEngine(String? stored) =>
+      stored == null || _unreliableEngines.contains(stored)
+          ? unknownEngine
+          : stored;
+
+  static const int defaultJourneyMonths = 3;
+
+  /// Análise completa: score, e por articulação amplitude, repetições, desvio,
+  /// referência, nota, faixa e meta, além da assimetria dos ombros.
+  MobilityScore get analysis => MobilityScore.fromRecord(this);
+
+  /// Medidas e análise em tipos JSON, para o app enviar ou gravar. É calculada
+  /// na hora; o histórico guarda só as medidas ([toJson]).
+  Map<String, dynamic> toResultJson() => {
+        ...toJson(),
+        'movements': [
+          for (final m in movements)
+            {...m.toJson(), 'averages': m.averages, 'deviations': m.deviations}
+        ],
+        'analysis':
+            analysis.toJson(months: jornadaMeses ?? defaultJourneyMonths),
+      };
 
   MovementResult? movement(String id) {
     for (final m in movements) {
@@ -266,6 +301,9 @@ class AssessmentRecord {
         'createdAt': createdAt.toIso8601String(),
         'volunteerCode': volunteerCode,
         'testNumber': testNumber,
+        if (idade != null) 'idade': idade,
+        if (pesoKg != null) 'pesoKg': pesoKg,
+        if (jornadaMeses != null) 'jornadaMeses': jornadaMeses,
         'engine': engine,
         'movements': movements.map((m) => m.toJson()).toList(),
         'reference': reference.toJson(),
@@ -276,7 +314,10 @@ class AssessmentRecord {
         createdAt: DateTime.parse(j['createdAt'] as String),
         volunteerCode: VolunteerCode.sanitize(j['volunteerCode'] as String),
         testNumber: (j['testNumber'] as num).toInt(),
-        engine: (j['engine'] as String?) ?? 'Google ML Kit Pose Detection',
+        idade: (j['idade'] as num?)?.toInt(),
+        pesoKg: (j['pesoKg'] as num?)?.toDouble(),
+        jornadaMeses: (j['jornadaMeses'] as num?)?.toInt(),
+        engine: _readEngine(j['engine'] as String?),
         movements: (j['movements'] as List)
             .map((e) => MovementResult.fromJson(Map<String, dynamic>.from(e)))
             .toList(),

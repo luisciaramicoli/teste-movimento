@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../flow.dart';
 import '../services/assessment_history_store.dart';
+import '../services/pose_camera_session.dart';
 import '../theme/app_theme.dart';
 import 'assessment_screen.dart';
 
@@ -27,6 +28,13 @@ class _HowItWorksScreenState extends State<HowItWorksScreen> {
   static const Color _bg = Color(0xFFFAFAFA);
 
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pré-aquece câmera e modelo nativo enquanto o usuário lê as instruções.
+    PoseCameraSession.prewarm();
+  }
 
   Future<void> _start() async {
     if (_busy) return;

@@ -3,6 +3,9 @@
 Regras aplicadas por `iniciarAvaliacao`. O protocolo de câmera de 5 posturas usa
 critérios próprios, definidos em `lib/src/services/protocol_service.dart`.
 
+A análise usa o **MediaPipe Pose Landmarker** (modelo `lite`). O ML Kit é a
+reserva quando o MediaPipe não está disponível.
+
 Os limites abaixo são constantes no código. Ao mudar uma delas, atualize este
 documento.
 
@@ -15,20 +18,19 @@ Cada ângulo é calculado no plano da imagem, no ponto do meio, de 0° a 180°.
 | `ombro_*` | quadril, **ombro**, cotovelo |
 | `quadril_*` | ombro, **quadril**, joelho |
 | `joelho_*` | quadril, **joelho**, tornozelo |
-| `tornozelo_*` | joelho, **tornozelo ou calcanhar**, ponta do pé |
+| `tornozelo_*` | joelho, **tornozelo**, ponta do pé |
 | `coluna` | meio dos ombros, **meio dos quadris**, vertical (0° = tronco ereto) |
 
 - Os pontos e os ângulos passam por um filtro One Euro para reduzir o tremor.
 - Quando um ponto falha, o último valor válido é mantido por até 4 quadros.
-- Nas vistas frontal e diagonal, quadril e joelho podem receber uma compensação
-  pelo encurtamento do fêmur na imagem, e o ângulo do tornozelo é estimado pela
-  elevação do calcanhar.
-- No agachamento de perfil, usa-se o ângulo medido, sem essas compensações; o
-  vértice do tornozelo é o ponto do tornozelo. Os pontos do lado oposto à câmera
-  são descartados.
+- Os ângulos devolvidos são os **medidos na imagem**, sem compensação de
+  perspectiva. A compensação existe só no
+  [protocolo de 5 posturas](api.md#protocolo-de-câmera-5-posturas).
+- O vértice do tornozelo é o ponto do tornozelo.
+- No agachamento de perfil, os pontos do lado oposto à câmera são descartados.
 
-Por isso, os ângulos de quadril, joelho e tornozelo registrados na abdução
-frontal são estimativas. Eles não entram no score.
+Na abdução, de frente, quadril, joelho e tornozelo sofrem distorção de
+perspectiva quando se movem em direção à câmera. Eles não entram no score.
 
 ## Enquadramento
 
@@ -146,11 +148,19 @@ Os valores dos ombros são médias ponderadas de 2.404 adultos (1.237 homens e
 
 ### Como interpretar
 
+Os valores desta tabela foram conferidos nos artigos: tabela 2 de Gill et al.
+(texto completo no PubMed Central, PMC7549223) e tabela 1 de Endo et al. O
+artigo de Endo não traz percentis.
+
 - R é uma **média** da amostra, não a amplitude máxima nem um limite clínico.
 - O estudo dos ombros usou inclinômetro, não câmera.
 - O estudo do agachamento tem só 9 homens, com idade média de 18,3 anos. O
   agachamento foi feito com os braços elevados, e o quadril foi medido em relação
   à pelve; a biblioteca mede em relação ao tronco.
+- A dorsiflexão também tem definições diferentes. Endo et al. usam o ângulo entre
+  a linha da cabeça da fíbula ao calcâneo e a do quinto metatarso; a biblioteca
+  usa a variação do ângulo joelho–tornozelo–ponta do pé entre a posição em pé e
+  o fundo.
 - A flexão e a dorsiflexão da biblioteca ainda não foram validadas contra
   goniômetro.
 

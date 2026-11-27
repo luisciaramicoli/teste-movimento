@@ -17,13 +17,14 @@ import 'package:flutter/material.dart';
 import 'src/flow.dart';
 import 'src/models/assessment_models.dart';
 import 'src/models/perfil_avaliado.dart';
+import 'src/models/protocol_models.dart';
 import 'src/services/assessment_csv.dart';
 import 'src/services/assessment_history_store.dart';
+import 'src/services/pose_camera_session.dart';
 import 'src/services/volunteer_code.dart';
 import 'src/theme/app_theme.dart';
 import 'src/views/camera_screen.dart';
 import 'src/views/how_it_works_screen.dart';
-import 'src/views/report_screen.dart';
 import 'src/views/result_screen.dart';
 
 export 'src/models/assessment_models.dart'
@@ -38,6 +39,12 @@ export 'src/models/assessment_models.dart'
         stdDev;
 export 'src/models/mobility_score.dart';
 export 'src/models/perfil_avaliado.dart' show PerfilAvaliado;
+export 'src/models/protocol_models.dart'
+    show
+        ProtocolSessionResult,
+        PostureEvaluationResult,
+        MobilityDeficitItem,
+        AngleTargetRange;
 export 'src/models/reference_norms.dart' show Sexo, ShoulderNorm, shoulderNorm;
 export 'src/services/volunteer_code.dart' show VolunteerCode;
 export 'src/views/camera_screen.dart' show CameraScreen;
@@ -54,6 +61,8 @@ class MovimentoMobilidade {
       // Força a implementação estável Camera2 (camera_android).
       CameraPlatform.instance = AndroidCamera();
     }
+    // Pré-aquece descoberta de câmeras e modelo nativo sem bloquear a abertura do app.
+    PoseCameraSession.prewarm();
   }
 
   /// Abre o fluxo completo: "Como funciona?", Passo 1/2, Passo 2/2 e, se
@@ -83,23 +92,26 @@ class MovimentoMobilidade {
     return fluxo.resultado;
   }
 
-  /// Abre a tela de câmera / protocolo com análise biomecânica e relatório.
-  static Future<void> iniciarCameraProtocolo(
+  /// Abre o protocolo de posturas e, ao fechar, devolve os valores da última
+  /// sessão finalizada, ou `null` se nenhuma postura foi avaliada. Não grava no
+  /// histórico.
+  static Future<ProtocolSessionResult?> iniciarCameraProtocolo(
     BuildContext context, {
     PerfilAvaliado? perfil,
-    bool simulationMode = false,
   }) async {
+    ProtocolSessionResult? result;
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => Theme(
           data: AppTheme.light,
           child: CameraScreen(
-            initialSimulationMode: simulationMode,
             perfil: perfil,
+            onSessionFinished: (value) => result = value,
           ),
         ),
       ),
     );
+    return result;
   }
 
   /// Tela de resultado de uma avaliação já existente (somente leitura).

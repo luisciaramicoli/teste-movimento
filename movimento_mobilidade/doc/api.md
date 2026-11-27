@@ -28,7 +28,7 @@ Ponto de entrada. Todos os membros são estáticos.
 | `telaResultado(avaliacao, {perfil})` | `Widget` | Tela de resultado de uma avaliação salva, sem **Refazer**. |
 | `historico()` | `Future<List<AssessmentRecord>>` | Avaliações deste aparelho, de todos os voluntários, da mais recente para a mais antiga. |
 | `exportarCsv(avaliacao)` | `String` | CSV de uma avaliação. |
-| `iniciarCameraProtocolo(context, …)` | `Future<void>` | Abre o [protocolo de 5 posturas](#protocolo-de-câmera-5-posturas). |
+| `iniciarCameraProtocolo(context, …)` | `Future<ProtocolSessionResult?>` | Abre o [protocolo de 5 posturas](#protocolo-de-câmera-5-posturas). |
 
 ### `iniciarAvaliacao`
 
@@ -67,6 +67,9 @@ padrão, estudo de referência e evolução no histórico.
 Idade, peso e Jornada gravados na avaliação têm prioridade. O `perfil` de
 `telaResultado` preenche apenas o que faltar na avaliação inicial. A referência
 do score é sempre a gravada na avaliação; `perfil.referencia` não a altera aqui.
+
+Um registro ilegível fica fora de `historico()`, mas continua gravado, e o número
+do teste dele não é reutilizado.
 
 A biblioteca não oferece função pública para apagar o histórico. Limpar os dados
 do app apaga tudo.
@@ -112,7 +115,7 @@ AssessmentRecord
 ├── idade          int?
 ├── pesoKg         double?
 ├── jornadaMeses   int?
-├── engine         String             não indica o motor realmente usado
+├── engine         String             motor(es) de pose usados na medição
 ├── reference      MobilityReference  referência usada no score
 └── movements      List<MovementResult>
     ├── movementId       String       'abducao_ombro' | 'agachamento_perfil_dir'
@@ -134,11 +137,19 @@ AssessmentRecord
 > esticado ≈ 180°), não a amplitude de flexão. Para amplitudes comparáveis com a
 > tela, use [`mobilityAngles`](#score).
 
+- `engine` traz, por exemplo, `MediaPipe Pose Landmarker lite (GPU)` ou
+  `ML Kit Pose Detection (base)`; se os dois foram usados, os nomes vêm
+  unidos por ` + `. Sem a informação, vale `AssessmentRecord.unknownEngine`.
+  Isso inclui avaliações de versões anteriores, que gravavam um texto fixo.
 - Uma articulação sem leitura válida não aparece no mapa.
 - `deviations` exige pelo menos 2 repetições com leitura.
 - Avaliações antigas podem ter mapas vazios e campos `null`.
 - `record.movement(id)` devolve o movimento ou `null`.
-- `toJson()` e `AssessmentRecord.fromJson()` serializam a avaliação. Na leitura,
+- `record.analysis` devolve a [análise completa](#score).
+- `record.toResultJson()` devolve, em tipos JSON, os campos acima, as médias e os
+  desvios por movimento e a análise em `analysis`.
+- `toJson()` e `AssessmentRecord.fromJson()` serializam só as medidas, que é o
+  que o histórico guarda. Na leitura,
   um código inválido vira `SEM_CODIGO`; um registro sem `reference` recebe
   `MobilityReference.illustrative`.
 
@@ -170,7 +181,7 @@ for (final movimento in avaliacao.movements) {
 As regras de cálculo estão em [Medição e score](medicao.md).
 
 ```dart
-final resultado = MobilityScore.fromRecord(avaliacao);
+final resultado = avaliacao.analysis; // MobilityScore.fromRecord(avaliacao)
 
 if (resultado.score == null) {
   debugPrint('Falta medir: ${resultado.missing.map((j) => j.label).join(', ')}');
@@ -195,8 +206,9 @@ if (resultado.shoulderAsymmetry?.alert ?? false) {
 | `MobilityScore.fromAngles(angles, {reference})` | Score a partir de amplitudes em graus. |
 | `score` | `double?` de 0 a 10, sem arredondar; `null` se faltar uma das 5 medidas. |
 | `goalScore(meses)` | Score simulado ao atingir a meta; `null` nas mesmas condições. |
+| `toJson(months: n)` | Análise completa em tipos JSON. |
 | `joints`, `joint(j)`, `missing` | Articulações medidas, busca de uma delas e lista das ausentes. |
-| `JointScore` | `angle`, `reference`, `percent`, `grade`, `band`, `atReference`, `goalAngle(meses)`. |
+| `JointScore` | `angle`, `repAngles`, `deviation` (`null` com menos de 2 repetições), `reference`, `percent`, `grade`, `band`, `atReference`, `goalAngle(meses)`. |
 | `MobilityJoint` | `ombroDir`, `ombroEsq`, `quadril`, `joelho`, `tornozelo`. |
 | `MobilityBand` | `adequada`, `reduzida`, `limitada`. |
 | `MobilityReference` | Referência por articulação. Constantes `standard` e `illustrative`. |
@@ -241,19 +253,30 @@ data_hora,voluntario,teste,movimento,repeticao,lado,articulacao,angulo_graus,con
 ## Relatório PDF
 
 O botão **Relatório** gera um PDF A4 da avaliação selecionada e abre o seletor
-de destino do Android. O arquivo traz código, teste, data, idade e peso (se
-houver), score, meta, uma tabela por articulação e a nota da referência. Não há
-função pública para gerar o PDF por código.
+de destino do Android. O visual segue a tela de resultado: cabeçalho preto, selo
+do score, um cartão por articulação com ícone, faixa colorida e barra em relação
+à referência.
+
+O arquivo traz código, teste, data, idade e peso (se houver), score e meta. Para
+cada articulação: amplitude média, faixa, nota, desvio padrão, referência e meta
+em graus. Inclui o alerta de assimetria, quando houver, e a nota da referência.
+Sem os [ícones](../README.md#imagens), o PDF é gerado sem eles. Não há função
+pública para gerar o PDF por código.
 
 Nome sugerido: `Mobilidade-<código>-teste-<n>.pdf`.
 
 ## Protocolo de câmera (5 posturas)
 
 ```dart
-await MovimentoMobilidade.iniciarCameraProtocolo(
+final sessao = await MovimentoMobilidade.iniciarCameraProtocolo(
   context,
   perfil: const PerfilAvaliado(idade: 25, pesoKg: 80),
 );
+if (sessao == null) return; // nenhuma postura foi avaliada
+debugPrint('Proximidade média: ${sessao.score}%');
+for (final restricao in sessao.deficits) {
+  debugPrint(restricao.description);
+}
 ```
 
 É um fluxo **independente** da avaliação principal, com posturas estáticas:
@@ -261,23 +284,38 @@ posição neutra, braços em T, elevação de panturrilha, agachamento isométri
 braços em W. Ao final, mostra um relatório com abas de mobilidade, amplitude e
 evolução dos ângulos na sessão.
 
+O retorno chega quando o fluxo é fechado e se refere à última sessão finalizada
+com pelo menos uma postura avaliada; caso contrário, é `null`.
+
+| Tipo | Campos |
+| --- | --- |
+| `ProtocolSessionResult` | `score` (0 a 100), `postures`, `deficits`, `engine` |
+| `PostureEvaluationResult` | `postureId`, `postureTitle`, `accuracyScorePct`, `capturedAngles`, `targetAngles`, `maxCalfElevationPct`, `maxCalfLeftPct`, `maxCalfRightPct`, `completionTimeSec`, `completedByIdealHold`, `mobilityStatus`, `deficits` |
+| `MobilityDeficitItem` | `postureId`, `jointKey`, `jointLabel`, `achievedValue`, `targetValue`, `unit`, `severity`, `description` |
+| `AngleTargetRange` | `jointKey`, `label`, `targetAngle`, `tolerance` |
+
 | Aspecto | Avaliação (`iniciarAvaliacao`) | Protocolo de câmera |
 | --- | --- | --- |
-| Motor de pose | MediaPipe, com ML Kit de reserva | ML Kit |
-| Retorno | `AssessmentRecord?` | Nenhum |
+| Motor de pose | MediaPipe, com ML Kit de reserva | MediaPipe, com ML Kit de reserva |
+| Ângulos | Medidos na imagem | Com compensação de perspectiva |
+| Retorno | `AssessmentRecord?` | `ProtocolSessionResult?` |
 | Histórico | Salva | Não salva |
 | Pontuação | 0 a 10, por amplitude | 0 a 100%, por proximidade dos ângulos-alvo |
 | CSV | `exportarCsv` | Copiado para a área de transferência, no relatório |
 | Perfil | Ver [`PerfilAvaliado`](#perfilavaliado) | Exibe idade e peso no relatório |
 
+> **Compensação de perspectiva:** nas vistas frontal e diagonal, este protocolo
+> substitui os ângulos de quadril, joelho e tornozelo por **estimativas** com
+> constantes fixas, das quais os ângulos-alvo dependem. Elas não foram
+> validadas. Não use esses valores como medidas articulares.
+
 O CSV deste fluxo tem outro esquema: `data_hora, voluntario, movimento, lado,
 articulacao, angulo, confianca, rom_min, rom_max`. A coluna `confianca` fica
 vazia, e `rom_min` e `rom_max` consideram a sessão inteira.
 
-> **Dados simulados:** com `simulationMode: true`, ou quando não há câmera ou ela
-> falha ao abrir, o fluxo passa a usar ângulos **sintéticos**. A tela da câmera
-> mostra "Modo Simulação Ativo". Não trate resultados desse modo como medidas de
-> uma pessoa.
+**Falha de câmera:** sem câmera, sem permissão ou com erro ao abrir ou trocar de
+câmera, a tela mostra "Câmera indisponível", com **Tentar novamente** e
+**Voltar**. Nada é medido nesse estado.
 
 As telas `CameraScreen` e `ReportScreen` também são exportadas. Para abrir o
 protocolo, prefira `iniciarCameraProtocolo`, que aplica o tema. `ReportScreen`

@@ -21,11 +21,11 @@ class PerfilAvaliado {
   /// Classificação do alcance exibida na etiqueta (ex.: "Ruim", "Bom").
   final String? alcanceClassificacao;
 
-  /// Sexo, usado com a [idade] (a do início da Jornada) para a referência.
+  /// Sexo opcional do avaliado, independente da referência padrão.
   final Sexo? sexo;
 
   /// Referência de amplitude própria. Se `null`, a avaliação usa
-  /// [MobilityReference.forProfile] com [idade] e [sexo].
+  /// [MobilityReference.standard].
   final MobilityReference? referencia;
 
   /// Duração da Jornada em meses, usada na meta.

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../models/joint_angle.dart';
@@ -73,28 +75,98 @@ class AssessmentOverlayPainter extends CustomPainter {
       canvas.drawCircle(Offset(pt.x, pt.y), 4, dot);
     }
 
-    for (final key in trackedJoints) {
-      final d = p.angles[key];
-      if (d == null || !d.isValid || d.angle == null || d.vertex == null) {
-        continue;
-      }
-      _label(canvas, '${d.angle!.round()}°', Offset(d.vertex!.x + 10, d.vertex!.y - 10));
+    _paintLabels(canvas, size, p);
+  }
+
+  void _paintLabels(Canvas canvas, Size size, ExtractedPoseData pose) {
+    final visible = [
+      for (final key in trackedJoints)
+        if (pose.angles[key] case final d?)
+          if (d.isValid && d.angle != null && d.vertex != null) d
+    ];
+    // No perfil, quadril e coluna usam o mesmo ponto: o nome os distingue.
+    final named = visible.any((d) => d.key == 'coluna');
+    final painters = [
+      for (final d in visible)
+        TextPainter(
+          text: TextSpan(
+            text: labelText(d.key, d.angle!, nameHip: named),
+            style: const TextStyle(
+                color: Color(0xFF5CE1FF),
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                shadows: [Shadow(color: Colors.black, blurRadius: 3)]),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout()
+    ];
+    final places = placeLabels(
+      [for (final d in visible) Offset(d.vertex!.x, d.vertex!.y)],
+      [for (final t in painters) t.size],
+      size,
+    );
+    for (var i = 0; i < painters.length; i++) {
+      painters[i].paint(canvas, places[i].topLeft);
     }
   }
 
-  void _label(Canvas canvas, String text, Offset at) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: const TextStyle(
-            color: Color(0xFF5CE1FF),
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            shadows: [Shadow(color: Colors.black, blurRadius: 3)]),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, at);
+  /// Texto do rótulo. A coluna sempre leva o nome; o quadril, quando a coluna
+  /// também é exibida ([nameHip]).
+  static String labelText(String key, double angle, {bool nameHip = false}) {
+    final value = '${angle.round()}°';
+    if (key == 'coluna') return 'Coluna $value';
+    if (nameHip && key.startsWith('quadril')) return 'Quadril $value';
+    return value;
+  }
+
+  /// Posiciona um rótulo para cada vértice, sem sobrepor outro e dentro de
+  /// [canvas]. Tenta à direita do ponto, depois à esquerda e, por fim, desce ou
+  /// sobe. Os pontos mais à direita são posicionados primeiro, para que num par
+  /// próximo o da esquerda vá para o lado de fora.
+  @visibleForTesting
+  static List<Rect> placeLabels(
+      List<Offset> vertices, List<Size> sizes, Size canvas) {
+    const gap = 10.0;
+    const spacing = 2.0;
+    final order = List<int>.generate(vertices.length, (i) => i)
+      ..sort((a, b) {
+        final byX = vertices[b].dx.compareTo(vertices[a].dx);
+        return byX != 0 ? byX : a.compareTo(b);
+      });
+    final result = List<Rect>.filled(vertices.length, Rect.zero);
+    final placed = <Rect>[];
+
+    Rect inside(Offset at, Size s) => Offset(
+          at.dx.clamp(0.0, math.max(0.0, canvas.width - s.width)),
+          at.dy.clamp(0.0, math.max(0.0, canvas.height - s.height)),
+        ) &
+        s;
+
+    for (final i in order) {
+      final v = vertices[i];
+      final s = sizes[i];
+      final right = v.dx + gap;
+      final left = v.dx - gap - s.width;
+      // Sem espaço à direita, tenta antes a esquerda, para não cobrir o ponto.
+      final sides =
+          right + s.width <= canvas.width ? [right, left] : [left, right];
+      Rect? chosen;
+      for (var step = 0; chosen == null && step <= vertices.length; step++) {
+        final shift = step * (s.height + spacing);
+        for (final dy in step == 0 ? [0.0] : [shift, -shift]) {
+          for (final x in sides) {
+            final candidate = inside(Offset(x, v.dy - gap + dy), s);
+            if (chosen == null &&
+                !placed.any((r) => r.overlaps(candidate.inflate(spacing / 2)))) {
+              chosen = candidate;
+            }
+          }
+        }
+      }
+      result[i] = chosen ?? inside(Offset(v.dx + gap, v.dy - gap), s);
+      placed.add(result[i]);
+    }
+    return result;
   }
 
   void _paintFrame(Canvas canvas, Size size) {
@@ -158,5 +230,10 @@ class AssessmentOverlayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant AssessmentOverlayPainter oldDelegate) => true;
+  bool shouldRepaint(covariant AssessmentOverlayPainter oldDelegate) =>
+      oldDelegate.pose != pose ||
+      oldDelegate.framingOk != framingOk ||
+      oldDelegate.alertColor != alertColor ||
+      oldDelegate.pulse != pulse ||
+      oldDelegate.trackedJoints != trackedJoints;
 }

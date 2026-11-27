@@ -229,8 +229,8 @@ void main() {
       createdAt: DateTime(2026, 11, 18, 9, 30),
       volunteerCode: 'V01',
       testNumber: 2,
-      movements: [
-        MovementResult(movementId: 'abducao_ombro', reps: const [
+      movements: const [
+        MovementResult(movementId: 'abducao_ombro', reps: [
           RepMeasurement(index: 1, angles: {'ombro_esq': 90, 'ombro_dir': 88}),
           RepMeasurement(index: 2, angles: {'ombro_esq': 94, 'ombro_dir': 92}),
           RepMeasurement(index: 3, angles: {'ombro_esq': 92, 'ombro_dir': 90}),

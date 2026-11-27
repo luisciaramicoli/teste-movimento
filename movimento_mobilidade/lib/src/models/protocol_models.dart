@@ -225,3 +225,26 @@ class PostureEvaluationResult {
     this.deficits = const [],
   });
 }
+
+/// Valores devolvidos pelo protocolo de posturas.
+class ProtocolSessionResult {
+  /// Posturas avaliadas, com ângulos, status e restrições.
+  final List<PostureEvaluationResult> postures;
+
+  /// Motor(es) de pose que processaram os quadros.
+  final String engine;
+
+  const ProtocolSessionResult({required this.postures, required this.engine});
+
+  /// Média, de 0 a 100, da proximidade dos ângulos-alvo; 0 sem posturas.
+  double get score => averageAccuracy(postures);
+
+  List<MobilityDeficitItem> get deficits =>
+      [for (final p in postures) ...p.deficits];
+
+  static double averageAccuracy(List<PostureEvaluationResult> postures) =>
+      postures.isEmpty
+          ? 0
+          : postures.fold<double>(0, (s, p) => s + p.accuracyScorePct) /
+              postures.length;
+}

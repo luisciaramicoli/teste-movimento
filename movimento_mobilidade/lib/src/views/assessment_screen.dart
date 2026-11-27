@@ -53,10 +53,12 @@ class _AssessmentScreenState extends State<AssessmentScreen>
   /// Tempo que um problema de enquadramento precisa persistir para ser avisado.
   static const double _warnDelay = 0.35;
 
-  /// Intervalo para repetir por voz um problema que continua. Não há aviso em
-  /// texto na tela.
-  static const double _warnRepeat = 7;
-  double _lastWarnAt = 0;
+  /// Os avisos são só por voz: intervalo mínimo entre problemas diferentes e
+  /// para repetir o mesmo problema.
+  static const double _warnGap = 3;
+  static const double _warnRepeat = 10;
+  double _lastWarnAt = -_warnRepeat;
+  FramingIssue? _lastSpokenIssue;
 
   late final AnimationController _pulse = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 700))
@@ -84,16 +86,20 @@ class _AssessmentScreenState extends State<AssessmentScreen>
 
   _Phase _phase = _Phase.capture;
   String _error = '';
+  bool _previewReady = false;
   int _movementIndex = 0;
   late RepTracker _tracker;
   final List<MovementResult> _results = [];
+
+  /// Motores que processaram os quadros usados na medição.
+  final Set<String> _engines = {};
   bool _saving = false;
 
   double? _insideSince;
   double? _outsideSince;
   bool _locked = false;
 
-  /// Tamanho do card da câmera (usado no mapeamento dos pontos do ML Kit).
+  /// Tamanho do card da câmera (usado no mapeamento dos pontos de pose).
   Size _screen = const Size(360, 400);
 
   MovementSpec get _spec => kProtocolMovements[_movementIndex];
@@ -114,7 +120,10 @@ class _AssessmentScreenState extends State<AssessmentScreen>
   }
 
   Future<void> _startCamera() async {
-    final err = await _camera.start();
+    final err = await _camera.start(onPreviewReady: () {
+      if (!mounted) return;
+      setState(() => _previewReady = true);
+    });
     if (!mounted) return;
     if (err != null) {
       setState(() {
@@ -174,12 +183,14 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       }
     }
     if (!framing.isInside) {
-      final changed = framing.issue != _lastHapticIssue;
-      if (changed) HapticFeedback.lightImpact();
-      if (changed ||
-          (!_voice.isSpeaking && t - _lastWarnAt >= _warnRepeat)) {
+      if (framing.issue != _lastHapticIssue) HapticFeedback.lightImpact();
+      final wait =
+          framing.issue != _lastSpokenIssue ? _warnGap : _warnRepeat;
+      // Não enfileira durante outra fala: evita aviso atrasado.
+      if (!_voice.isSpeaking && t - _lastWarnAt >= wait) {
         _lastWarnAt = t;
-        _voice.speak(framing.message, interrupt: false);
+        _lastSpokenIssue = framing.issue;
+        _voice.speak(framing.message);
       }
     }
     _lastHapticIssue = framing.isInside ? null : framing.issue;
@@ -190,7 +201,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       if (!_locked && t - _insideSince! >= _lockSeconds) {
         _locked = true;
         HapticFeedback.selectionClick();
-        _voice.speak('Posição correta. Pode começar.', interrupt: false);
+        _voice.speak('Pode começar.', interrupt: false);
       }
     } else {
       _insideSince = null;
@@ -213,6 +224,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
           if (e.value.isValid && e.value.confidence != null)
             e.key: e.value.confidence!
       };
+      _engines.add(_camera.lastEngine);
       if (_tracker.update(angles, t, confidences: confidences)) {
         HapticFeedback.mediumImpact();
         finished = _tracker.isComplete;
@@ -231,11 +243,10 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     _results.add(_tracker.toResult());
     if (_movementIndex < kProtocolMovements.length - 1) {
       _movementIndex++;
-      _voice.speak('Movimento concluído. Próximo: ${_spec.title}. '
-          '${_spec.voiceGuide}');
+      _voice.speak('Próximo. ${_spec.voiceGuide}');
       _beginCapture();
     } else {
-      _voice.speak('Avaliação concluída.');
+      _voice.speak('Concluído.');
       _save();
     }
   }
@@ -249,10 +260,12 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       volunteerCode: widget.volunteerCode,
       testNumber: widget.testNumber,
       movements: List.of(_results),
+      engine: _engines.join(' + '),
+      idade: widget.fluxo.perfil?.idade,
+      pesoKg: widget.fluxo.perfil?.pesoKg,
+      jornadaMeses: widget.fluxo.perfil?.jornadaMeses,
       reference: widget.fluxo.perfil?.referencia ??
-          MobilityReference.forProfile(
-              idade: widget.fluxo.perfil?.idade,
-              sexo: widget.fluxo.perfil?.sexo),
+          MobilityReference.standard,
     );
     await AssessmentHistoryStore().add(record);
     widget.fluxo.resultado = record;
@@ -377,10 +390,7 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       const Spacer(),
       if (_camera.cameras.length > 1)
         GestureDetector(
-          onTap: () async {
-            await _camera.switchCamera();
-            if (mounted) setState(() {});
-          },
+          onTap: _switchCamera,
           child: Container(
             width: 24,
             height: 24,
@@ -406,7 +416,19 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     );
   }
 
+  Future<void> _switchCamera() async {
+    if (!mounted) return;
+    setState(() => _previewReady = false);
+    await _camera.switchCamera(onPreviewReady: () {
+      if (mounted) setState(() => _previewReady = true);
+    });
+    if (mounted && _camera.isPreviewReady && !_previewReady) {
+      setState(() => _previewReady = true);
+    }
+  }
+
   Widget _cameraCard() {
+    final showPreview = _previewReady && _camera.isPreviewReady;
     return ClipRRect(
       borderRadius: BorderRadius.circular(_radius),
       child: LayoutBuilder(builder: (context, c) {
@@ -415,35 +437,59 @@ class _AssessmentScreenState extends State<AssessmentScreen>
           fit: StackFit.expand,
           children: [
             const ColoredBox(color: Colors.black),
-            RepaintBoundary(child: _camera.buildPreview(_screen)),
-            AnimatedBuilder(
-              animation: _pulse,
-              builder: (context, _) => ValueListenableBuilder<_Live>(
-                valueListenable: _live,
-                builder: (context, live, _) => CustomPaint(
-                  painter: AssessmentOverlayPainter(
-                    pose: live.pose,
-                    trackedJoints: _spec.joints,
-                    framingOk: live.framing.isInside,
-                    alertColor: _alertColor(live.framing.issue),
-                    pulse: _pulse.value,
+            if (showPreview) ...[
+              RepaintBoundary(child: _camera.buildPreview(_screen)),
+              AnimatedBuilder(
+                animation: _pulse,
+                builder: (context, _) => ValueListenableBuilder<_Live>(
+                  valueListenable: _live,
+                  builder: (context, live, _) => CustomPaint(
+                    painter: AssessmentOverlayPainter(
+                      pose: live.pose,
+                      trackedJoints: _spec.joints,
+                      framingOk: live.framing.isInside,
+                      alertColor: _alertColor(live.framing.issue),
+                      pulse: _pulse.value,
+                    ),
                   ),
                 ),
               ),
-            ),
-            Positioned(
-              left: 12,
-              bottom: 12,
-              child: ValueListenableBuilder<_Live>(
-                valueListenable: _live,
-                builder: (_, live, __) => _repChip(live),
+              Positioned(
+                left: 12,
+                bottom: 12,
+                child: ValueListenableBuilder<_Live>(
+                  valueListenable: _live,
+                  builder: (_, live, __) => _repChip(live),
+                ),
               ),
-            ),
+            ] else
+              _buildCameraLoading(),
           ],
         );
       }),
     );
   }
+
+  Widget _buildCameraLoading() => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: Colors.white,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Iniciando câmera...',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ),
+      );
 
   Widget _repChip(_Live live) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),

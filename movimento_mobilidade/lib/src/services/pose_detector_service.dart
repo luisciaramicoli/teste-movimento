@@ -5,8 +5,8 @@ import '../models/joint_angle.dart';
 import 'one_euro_filter.dart';
 
 class PoseDetectorService {
-  late final PoseDetector _detector;
-  bool isInitialized = false;
+  PoseDetector? _detector;
+  bool get isInitialized => _detector != null;
 
   final Map<String, Point2D> _smoothedLandmarks = {};
   final Map<String, double> _smoothedAngles = {};
@@ -18,20 +18,29 @@ class PoseDetectorService {
   final Map<String, OneEuroFilter> _angleFilters = {};
   final Map<String, OneEuroFilter> _pointFiltersX = {};
   final Map<String, OneEuroFilter> _pointFiltersY = {};
-  final Stopwatch _filterStopwatch = Stopwatch()..start();
+  /// Tempo em segundos usado pelos filtros. Por padrão, o relógio do aparelho;
+  /// o replay de vídeo informa o tempo de cada quadro.
+  final double Function() _clock;
 
-  PoseDetectorService() {
-    _detector = PoseDetector(
+  PoseDetectorService({double Function()? clock})
+      : _clock = clock ?? _stopwatchClock();
+
+  static double Function() _stopwatchClock() {
+    final stopwatch = Stopwatch()..start();
+    return () => stopwatch.elapsedMilliseconds / 1000.0;
+  }
+
+  PoseDetector _ensureDetector() {
+    return _detector ??= PoseDetector(
       options: PoseDetectorOptions(
         mode: PoseDetectionMode.stream,
         model: PoseDetectionModel.base,
       ),
     );
-    isInitialized = true;
   }
 
   Future<List<Pose>> processImage(InputImage inputImage) async {
-    return await _detector.processImage(inputImage);
+    return _ensureDetector().processImage(inputImage);
   }
 
   bool _diagonalMode = true;
@@ -64,7 +73,7 @@ class PoseDetectorService {
   }
 
   Point2D _smoothPoint(String key, Point2D target) {
-    final t = _filterStopwatch.elapsedMilliseconds / 1000.0;
+    final t = _clock();
     // minCutoff=2.6 e beta=0.045 eliminam o atraso ("lag") mantendo estabilidade
     final fx = _pointFiltersX.putIfAbsent(
       key,
@@ -88,7 +97,7 @@ class PoseDetectorService {
   }
 
   double _smoothAngle(String key, double target) {
-    final t = _filterStopwatch.elapsedMilliseconds / 1000.0;
+    final t = _clock();
     // Filtro leve nos ângulos (evita dupla filtragem pesada que travava a leitura)
     final f = _angleFilters.putIfAbsent(
       key,
@@ -101,7 +110,8 @@ class PoseDetectorService {
   }
 
   void dispose() {
-    _detector.close();
+    _detector?.close();
+    _detector = null;
   }
 
   ExtractedPoseData extractAnglesFromPose(
@@ -110,6 +120,7 @@ class PoseDetectorService {
     required Size screenSize,
     bool isFrontCamera = false,
     String? onlySide,
+    bool compensatePerspective = false,
   }) {
     final double scale = max(
       screenSize.width / inputImageSize.width,
@@ -178,7 +189,9 @@ class PoseDetectorService {
     // Em perfil, descobre qual lado do corpo está de fato voltado para a câmera
     // (e corrige rótulos esquerdo/direito trocados pelo modelo).
     final String? visibleSide =
-        onlySide != null ? _resolveProfileSide(points) : null;
+        onlySide != null
+            ? _resolveProfileSide(points, mirrored: isFrontCamera)
+            : null;
 
     final Map<String, Point2D> validLandmarks = {};
     points.forEach((k, v) {
@@ -193,8 +206,11 @@ class PoseDetectorService {
     } else {
       if (orientation.$1 < 42.0) _diagonalMode = true;
     }
-    // No teste de perfil não há escorço frontal: usa sempre o ângulo medido.
-    final bool isFrontalOrDiagonal = onlySide == null && _diagonalMode;
+    // Por padrão, os ângulos são os medidos na imagem. [compensatePerspective]
+    // troca quadril, joelho e tornozelo por estimativas nas vistas frontal e
+    // diagonal; só o protocolo de posturas usa. Em perfil, nunca se aplica.
+    final bool isFrontalOrDiagonal =
+        compensatePerspective && onlySide == null && _diagonalMode;
 
     // Em perfil, o lado oposto à câmera fica ocluído e o modelo "inventa" os
     // pontos dele (esqueleto bagunçado). Mantém só o lado visível.
@@ -377,7 +393,9 @@ class PoseDetectorService {
     // Em perfil, o vértice é o tornozelo: a variação do ângulo acompanha a
     // dorsiflexão e a linha de base não muda se o calcanhar sumir num quadro.
     String ankleVertex(String side) =>
-        onlySide == null && points['${side}_HEEL'] != null
+        compensatePerspective &&
+                onlySide == null &&
+                points['${side}_HEEL'] != null
             ? '${side}_HEEL'
             : '${side}_ANKLE';
     final String leftAnkleVertex = ankleVertex('LEFT');
@@ -474,6 +492,7 @@ class PoseDetectorService {
       bodyOrientationAngle: orientation.$1,
       bodyOrientationLabel: orientation.$2,
       visibleSide: visibleSide,
+      mirrored: isFrontCamera,
     );
   }
 
@@ -521,9 +540,11 @@ class PoseDetectorService {
   /// Deduz o lado voltado para a câmera a partir da direção do corpo e troca os
   /// rótulos LEFT_/RIGHT_ de [p] (in place) se o modelo os inverteu.
   ///
-  /// Na imagem sem espelhamento, quem está com o lado ESQUERDO para a câmera
-  /// olha para a ESQUERDA da imagem (e vice-versa).
-  String? _resolveProfileSide(Map<String, Point2D?> p) {
+  /// Na imagem sem espelhamento (câmera traseira), quem está com o lado
+  /// ESQUERDO para a câmera olha para a ESQUERDA da imagem (e vice-versa). Com
+  /// [mirrored] (câmera frontal), a relação se inverte.
+  String? _resolveProfileSide(Map<String, Point2D?> p,
+      {required bool mirrored}) {
     final nose = p['NOSE'];
     final lHip = p['LEFT_HIP'];
     final rHip = p['RIGHT_HIP'];
@@ -553,7 +574,7 @@ class PoseDetectorService {
     if (score.abs() > 0.08 * torso) _headingRight = score > 0;
     final heading = _headingRight;
     if (heading == null) return null;
-    final String side = heading ? 'LEFT' : 'RIGHT';
+    final String side = heading == mirrored ? 'LEFT' : 'RIGHT';
 
     // 2) Grupo mais próximo da câmera pela profundidade (menor z = mais perto).
     double? meanZ(String s) {
@@ -628,125 +649,5 @@ class PoseDetectorService {
     }
 
     return (roundedYaw, label);
-  }
-
-  ExtractedPoseData generateSyntheticAngles(double timeSec, Size screenSize) {
-    final squatCycle = sin(2 * pi * 0.4 * timeSec);
-    final joelhoAngle = ((125.0 - 45.0 * squatCycle) * 10).roundToDouble() / 10.0;
-    final quadrilAngle = ((135.0 - 40.0 * squatCycle) * 10).roundToDouble() / 10.0;
-
-    final armCycle = sin(2 * pi * 0.2 * timeSec);
-    final cotoveloAngle = ((110.0 + 40.0 * armCycle) * 10).roundToDouble() / 10.0;
-    final ombroAngle = ((85.0 + 35.0 * armCycle) * 10).roundToDouble() / 10.0;
-
-    final calfCycle = (sin(2 * pi * 0.3 * timeSec) + 1.0) / 2.0;
-    final tornozeloAngle = ((100.0 + 42.0 * calfCycle) * 10).roundToDouble() / 10.0;
-    final calfPct = ((calfCycle * 85.0) * 10).roundToDouble() / 10.0;
-
-    final double cx = screenSize.width / 2.0;
-    final double cy = screenSize.height / 2.0;
-    final double heelLift = 18.0 * calfCycle;
-
-    final landmarks = {
-      'NOSE': Point2D(cx, cy - 180),
-      'LEFT_SHOULDER': Point2D(cx - 60, cy - 130),
-      'RIGHT_SHOULDER': Point2D(cx + 60, cy - 130),
-      'LEFT_ELBOW': Point2D(cx - 90, cy - 60 + 20 * armCycle),
-      'RIGHT_ELBOW': Point2D(cx + 90, cy - 60 - 20 * armCycle),
-      'LEFT_WRIST': Point2D(cx - 100, cy + 10 + 30 * armCycle),
-      'RIGHT_WRIST': Point2D(cx + 100, cy + 10 - 30 * armCycle),
-      'LEFT_HIP': Point2D(cx - 45, cy + 30 + 15 * squatCycle),
-      'RIGHT_HIP': Point2D(cx + 45, cy + 30 + 15 * squatCycle),
-      'LEFT_KNEE': Point2D(cx - 50, cy + 130 + 25 * squatCycle),
-      'RIGHT_KNEE': Point2D(cx + 50, cy + 130 + 25 * squatCycle),
-      'LEFT_ANKLE': Point2D(cx - 50, cy + 225 - heelLift),
-      'RIGHT_ANKLE': Point2D(cx + 50, cy + 225 - heelLift),
-      'LEFT_HEEL': Point2D(cx - 46, cy + 238 - heelLift),
-      'RIGHT_HEEL': Point2D(cx + 46, cy + 238 - heelLift),
-      'LEFT_FOOT_INDEX': Point2D(cx - 64, cy + 242),
-      'RIGHT_FOOT_INDEX': Point2D(cx + 64, cy + 242),
-    };
-
-    final angles = {
-      'cotovelo_esq': JointAngleData(
-        key: 'cotovelo_esq',
-        label: 'Cotovelo Esquerdo',
-        angle: cotoveloAngle,
-        vertex: landmarks['LEFT_ELBOW'],
-        isValid: true,
-      ),
-      'cotovelo_dir': JointAngleData(
-        key: 'cotovelo_dir',
-        label: 'Cotovelo Direito',
-        angle: cotoveloAngle,
-        vertex: landmarks['RIGHT_ELBOW'],
-        isValid: true,
-      ),
-      'ombro_esq': JointAngleData(
-        key: 'ombro_esq',
-        label: 'Ombro Esquerdo',
-        angle: ombroAngle,
-        vertex: landmarks['LEFT_SHOULDER'],
-        isValid: true,
-      ),
-      'ombro_dir': JointAngleData(
-        key: 'ombro_dir',
-        label: 'Ombro Direito',
-        angle: ombroAngle,
-        vertex: landmarks['RIGHT_SHOULDER'],
-        isValid: true,
-      ),
-      'quadril_esq': JointAngleData(
-        key: 'quadril_esq',
-        label: 'Quadril Esquerdo',
-        angle: quadrilAngle,
-        vertex: landmarks['LEFT_HIP'],
-        isValid: true,
-      ),
-      'quadril_dir': JointAngleData(
-        key: 'quadril_dir',
-        label: 'Quadril Direito',
-        angle: quadrilAngle,
-        vertex: landmarks['RIGHT_HIP'],
-        isValid: true,
-      ),
-      'joelho_esq': JointAngleData(
-        key: 'joelho_esq',
-        label: 'Joelho Esquerdo',
-        angle: joelhoAngle,
-        vertex: landmarks['LEFT_KNEE'],
-        isValid: true,
-      ),
-      'joelho_dir': JointAngleData(
-        key: 'joelho_dir',
-        label: 'Joelho Direito',
-        angle: joelhoAngle,
-        vertex: landmarks['RIGHT_KNEE'],
-        isValid: true,
-      ),
-      'tornozelo_esq': JointAngleData(
-        key: 'tornozelo_esq',
-        label: 'Tornozelo / Panturrilha Esq.',
-        angle: tornozeloAngle,
-        vertex: landmarks['LEFT_HEEL'],
-        isValid: true,
-      ),
-      'tornozelo_dir': JointAngleData(
-        key: 'tornozelo_dir',
-        label: 'Tornozelo / Panturrilha Dir.',
-        angle: tornozeloAngle,
-        vertex: landmarks['RIGHT_HEEL'],
-        isValid: true,
-      ),
-    };
-
-    return ExtractedPoseData(
-      angles: angles,
-      landmarks: landmarks,
-      calfElevationLeftPct: calfPct,
-      calfElevationRightPct: calfPct,
-      bodyOrientationAngle: 12.0,
-      bodyOrientationLabel: 'Frontal',
-    );
   }
 }

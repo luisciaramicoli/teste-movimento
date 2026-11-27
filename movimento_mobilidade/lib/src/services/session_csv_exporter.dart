@@ -1,5 +1,6 @@
 import '../models/joint_angle.dart';
 import '../models/protocol_models.dart';
+import '../utils/csv_utils.dart';
 import 'volunteer_code.dart';
 
 /// Exportação de sessão em CSV (RF09), identificando o voluntário só por código (RF10).
@@ -11,6 +12,8 @@ import 'volunteer_code.dart';
 /// `confianca` fica vazia quando o motor de pose não informa o valor
 /// agregado da articulação; nunca é preenchida com valor inventado.
 class SessionCsvExporter {
+  SessionCsvExporter._();
+
   static const List<String> header = [
     'data_hora',
     'voluntario',
@@ -27,21 +30,8 @@ class SessionCsvExporter {
 
   static String normalizeCode(String code) => VolunteerCode.normalize(code);
 
-  static String _side(String jointKey) {
-    if (jointKey.endsWith('_esq')) return 'esquerdo';
-    if (jointKey.endsWith('_dir')) return 'direito';
-    return 'n/a';
-  }
-
-  static String _joint(String jointKey) =>
-      jointKey.replaceAll(RegExp(r'_(esq|dir)$'), '');
-
-  static String _escape(String v) =>
-      (v.contains(',') || v.contains('"') || v.contains('\n'))
-          ? '"${v.replaceAll('"', '""')}"'
-          : v;
-
-  static String _num(double? v) => v == null ? '' : v.toStringAsFixed(1);
+  static String _formatAngle(double? value) =>
+      value == null ? '' : value.toStringAsFixed(1);
 
   static String build({
     required String volunteerCode,
@@ -56,19 +46,19 @@ class SessionCsvExporter {
     final stamp = when.toIso8601String();
     final rows = <String>[header.join(',')];
 
-    for (final p in postures) {
-      p.capturedAngles.forEach((key, angle) {
+    for (final posture in postures) {
+      posture.capturedAngles.forEach((key, angle) {
         final rec = tracker.records[key];
         rows.add([
           stamp,
           code,
-          _escape(p.postureTitle),
-          _side(key),
-          _joint(key),
-          _num(angle),
+          escapeCsvCell(posture.postureTitle),
+          jointSideLabel(key),
+          jointBaseKey(key),
+          _formatAngle(angle),
           '',
-          _num(rec?.minAngle),
-          _num(rec?.maxAngle),
+          _formatAngle(rec?.minAngle),
+          _formatAngle(rec?.maxAngle),
         ].join(','));
       });
     }

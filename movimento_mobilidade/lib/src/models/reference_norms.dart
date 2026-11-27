@@ -16,6 +16,11 @@ class ShoulderNorm {
   const ShoulderNorm(this.right, this.left);
 }
 
+/// Médias de abdução da Tabela 2 de Gill et al., ponderadas pelos tamanhos
+/// dos dois grupos (1.237 homens e 1.167 mulheres), arredondadas a 0,1°.
+const double pooledShoulderRightMean = 150.6;
+const double pooledShoulderLeftMean = 148.7;
+
 /// Uma faixa etária: vale de [minAge] até a faixa seguinte.
 class _AgeBand {
   final int minAge;
@@ -57,9 +62,18 @@ ShoulderNorm? shoulderNorm(int age, Sexo sex) {
 }
 
 /// Endo, Miura e Sakamoto, 2020, J Phys Ther Sci 32(6):391–394
-/// (doi:10.1589/jpts.32.391): flexão do lado direito no ponto mais profundo,
-/// em vídeo 2D. Amostra de só 9 homens de 18,3 anos; por isso o valor é o mesmo
-/// para todos os perfis. O estudo mede o quadril em relação à pelve, e o app,
-/// em relação ao tronco.
-const double kSquatHipFlexionNorm = 124.6;
-const double kSquatKneeFlexionNorm = 125.2;
+/// (doi:10.1589/jpts.32.391), tabela 1: ângulos no ponto mais profundo do
+/// agachamento, em vídeo 2D, de nove homens. O artigo traz só média e
+/// desvio-padrão.
+typedef SquatStudyRow = ({double mean, double sd});
+
+// Lado direito, usado como referência.
+const double squatAnkleRightMean = 25.9;
+const double squatAnkleRightSd = 5.1;
+const double squatHipRightMean = 124.6;
+const double squatKneeRightMean = 125.2;
+
+const SquatStudyRow squatHipRight = (mean: squatHipRightMean, sd: 13.6);
+const SquatStudyRow squatHipLeft = (mean: 124.1, sd: 25.1);
+const SquatStudyRow squatKneeRight = (mean: squatKneeRightMean, sd: 24.8);
+const SquatStudyRow squatKneeLeft = (mean: 124.3, sd: 14.5);

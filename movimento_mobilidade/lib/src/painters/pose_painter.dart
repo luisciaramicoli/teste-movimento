@@ -567,5 +567,16 @@ class PosePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant PosePainter oldDelegate) => true;
+  bool shouldRepaint(covariant PosePainter oldDelegate) =>
+      oldDelegate.anglesData != anglesData ||
+      oldDelegate.landmarks != landmarks ||
+      oldDelegate.protocolStage != protocolStage ||
+      oldDelegate.positioningAssessment != positioningAssessment ||
+      oldDelegate.activePosture != activePosture ||
+      oldDelegate.jointFeedbacks != jointFeedbacks ||
+      oldDelegate.holdProgress != holdProgress ||
+      oldDelegate.evaluationWindowProgress != evaluationWindowProgress ||
+      oldDelegate.postureAccuracyPct != postureAccuracyPct ||
+      oldDelegate.showAngles != showAngles ||
+      oldDelegate.showSkeleton != showSkeleton;
 }

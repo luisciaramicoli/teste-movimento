@@ -38,7 +38,7 @@ class MobilityReference {
   final double joelho;
   final double tornozelo;
 
-  /// True enquanto os valores não forem a tabela oficial por sexo e idade.
+  /// Indica que a referência inclui valores provisórios.
   final bool provisional;
 
   /// Origem dos valores, exibida na tela de resultado.
@@ -69,33 +69,22 @@ class MobilityReference {
       quadril: 120,
       joelho: 140,
       tornozelo: _illustrativeAnkle,
-      provisional: true);
-
-  /// Referência provisória para o perfil: ombro pela média de sexo e idade
-  /// (ilustrativo se faltar dado ou abaixo de 20 anos), quadril e joelho pelo
-  /// estudo de agachamento e tornozelo ilustrativo.
-  factory MobilityReference.forProfile({int? idade, Sexo? sexo}) {
-    final norm =
-        idade == null || sexo == null ? null : shoulderNorm(idade, sexo);
-    final String shoulderNote;
-    if (norm != null) {
-      shoulderNote = 'Ombro: média por sexo e idade (Gill et al., 2020).';
-    } else if (idade != null && sexo != null) {
-      shoulderNote = 'Ombro: ilustrativo (o estudo começa aos 20 anos).';
-    } else {
-      shoulderNote = 'Ombro: ilustrativo (faltam sexo ou idade).';
-    }
-    return MobilityReference(
-      ombroDir: norm?.right ?? _illustrativeShoulder,
-      ombroEsq: norm?.left ?? _illustrativeShoulder,
-      quadril: kSquatHipFlexionNorm,
-      joelho: kSquatKneeFlexionNorm,
-      tornozelo: _illustrativeAnkle,
       provisional: true,
-      note: '$shoulderNote Quadril e joelho: Endo et al., 2020 (9 homens de '
-          '18 anos). Tornozelo: ilustrativo.',
-    );
-  }
+      note: 'Referências ilustrativas da coletânea de mobilidade.');
+
+  static const standard = MobilityReference(
+    ombroDir: pooledShoulderRightMean,
+    ombroEsq: pooledShoulderLeftMean,
+    quadril: squatHipRightMean,
+    joelho: squatKneeRightMean,
+    tornozelo: squatAnkleRightMean,
+    note: 'Referência padrão de abdução ativa dos ombros baseada em Gill et al. '
+        '(2020), tabela 2. Quadril, joelho e tornozelo usam as médias do lado '
+        'direito no agachamento profundo de Endo et al. (2020), tabela 1.',
+  );
+
+  /// Compatibilidade com chamadas que ainda informam os dados do perfil.
+  factory MobilityReference.forProfile({int? idade, Sexo? sexo}) => standard;
 
   double of(MobilityJoint joint) => switch (joint) {
         MobilityJoint.ombroDir => ombroDir,
@@ -115,17 +104,21 @@ class MobilityReference {
         'note': note,
       };
 
-  /// Registros da versão anterior tinham um único valor `ombro`.
+  /// Registros da versão anterior tinham um único valor `ombro` ou notas
+  /// legadas com texto "ilustrativo"/"provisório".
   factory MobilityReference.fromJson(Map<String, dynamic> j) {
     double shoulder(String key) => ((j[key] ?? j['ombro']) as num).toDouble();
+    final rawNote = j['note'] as String?;
+    final wasUniversal = rawNote ==
+        'Referência normativa geral (todas as idades e gêneros).';
     return MobilityReference(
       ombroDir: shoulder('ombroDir'),
       ombroEsq: shoulder('ombroEsq'),
       quadril: (j['quadril'] as num).toDouble(),
       joelho: (j['joelho'] as num).toDouble(),
       tornozelo: (j['tornozelo'] as num).toDouble(),
-      provisional: (j['provisional'] as bool?) ?? false,
-      note: j['note'] as String?,
+      provisional: wasUniversal || (j['provisional'] as bool? ?? false),
+      note: wasUniversal ? 'Referência fixa usada nesta avaliação anterior.' : rawNote,
     );
   }
 }
@@ -193,8 +186,19 @@ class JointScore {
   final MobilityJoint joint;
   final double angle;
   final double reference;
+  /// Amplitude de cada repetição com leitura válida.
+  final List<double> repAngles;
+
   const JointScore(
-      {required this.joint, required this.angle, required this.reference});
+      {required this.joint,
+      required this.angle,
+      required this.reference,
+      this.repAngles = const []});
+
+  /// Desvio padrão amostral das repetições; null com menos de duas.
+  double? get deviation => repAngles.length < 2
+      ? null
+      : (stdDev(repAngles) * 10).roundToDouble() / 10;
 
   double get percent => angle / reference * 100;
   double get grade => mobilityGrade(angle, reference);
@@ -211,17 +215,26 @@ class MobilityScore {
   const MobilityScore._(this.joints, this.reference);
 
   factory MobilityScore.fromAngles(Map<MobilityJoint, double> angles,
-          {MobilityReference reference = MobilityReference.illustrative}) =>
+          {MobilityReference reference = MobilityReference.standard,
+          Map<MobilityJoint, List<double>> repAngles = const {}}) =>
       MobilityScore._([
         for (final j in MobilityJoint.values)
           if (angles[j] != null)
-            JointScore(joint: j, angle: angles[j]!, reference: reference.of(j))
+            JointScore(
+                joint: j,
+                angle: angles[j]!,
+                reference: reference.of(j),
+                repAngles: repAngles[j] ?? const [])
       ], reference);
 
   /// Score da avaliação, com a referência gravada nela.
   factory MobilityScore.fromRecord(AssessmentRecord record) =>
       MobilityScore.fromAngles(mobilityAngles(record),
-          reference: record.reference);
+          reference: record.reference,
+          repAngles: {
+            for (final j in MobilityJoint.values)
+              j: [for (final r in mobilityJointReps(record, j)) r.angle]
+          });
 
   JointScore? joint(MobilityJoint joint) {
     for (final s in joints) {
@@ -249,10 +262,82 @@ class MobilityScore {
     return ShoulderAsymmetry(right: r.angle, left: l.angle);
   }
 
+  /// Toda a análise em tipos JSON, com a meta para [months] meses.
+  Map<String, dynamic> toJson({required int months}) {
+    final asymmetry = shoulderAsymmetry;
+    return {
+      'score': score,
+      'goalMonths': months,
+      'goalScore': goalScore(months),
+      'joints': [
+        for (final j in joints)
+          {
+            'joint': j.joint.name,
+            'label': j.joint.label,
+            'angle': j.angle,
+            'repAngles': j.repAngles,
+            'deviation': j.deviation,
+            'reference': j.reference,
+            'percent': j.percent,
+            'grade': j.grade,
+            'band': j.band.name,
+            'goalAngle': j.goalAngle(months),
+          }
+      ],
+      'missing': [for (final j in missing) j.name],
+      'shoulderAsymmetry': asymmetry == null
+          ? null
+          : {
+              'degrees': asymmetry.degrees,
+              'percent': asymmetry.percent,
+              'alert': asymmetry.alert,
+            },
+      'reference': reference.toJson(),
+    };
+  }
+
   double? _mean(double Function(JointScore) value) {
     if (missing.isNotEmpty) return null;
     return joints.fold<double>(0, (s, j) => s + value(j)) / joints.length;
   }
+}
+
+/// Amplitudes individuais de cada repetição válida para [joint] no [record].
+List<({int index, double angle})> mobilityJointReps(
+    AssessmentRecord record, MobilityJoint joint) {
+  const abduction = 'abducao_ombro';
+  const squat = 'agachamento_perfil_dir';
+
+  double? flexion(RepMeasurement rep, String key) {
+    final v = rep.angles[key];
+    return v == null ? null : max(0, 180 - v).toDouble();
+  }
+
+  final (String movementId, double? Function(RepMeasurement) read) =
+      switch (joint) {
+    MobilityJoint.ombroDir => (abduction, (RepMeasurement r) => r.angles['ombro_dir']),
+    MobilityJoint.ombroEsq => (abduction, (RepMeasurement r) => r.angles['ombro_esq']),
+    MobilityJoint.quadril => (squat, (RepMeasurement r) => flexion(r, 'quadril_dir')),
+    MobilityJoint.joelho => (squat, (RepMeasurement r) => flexion(r, 'joelho_dir')),
+    MobilityJoint.tornozelo => (
+        squat,
+        (RepMeasurement r) {
+          final rest = r.restAngles['tornozelo_dir'];
+          final peak = r.angles['tornozelo_dir'];
+          return rest == null || peak == null
+              ? null
+              : max(0, rest - peak).toDouble();
+        }
+      ),
+  };
+
+  final movement = record.movement(movementId);
+  if (movement == null) return const [];
+  return [
+    for (final rep in movement.reps)
+      if (read(rep) case final v?)
+        (index: rep.index, angle: (v * 10).roundToDouble() / 10),
+  ];
 }
 
 /// Amplitudes das 5 articulações: média das repetições com leitura válida.
@@ -262,35 +347,12 @@ class MobilityScore {
 /// posição em pé; sem essa linha de base (registros antigos), fica de fora.
 Map<MobilityJoint, double> mobilityAngles(AssessmentRecord record) {
   final out = <MobilityJoint, double>{};
-
-  void add(MobilityJoint joint, String movementId,
-      double? Function(RepMeasurement) read) {
-    final movement = record.movement(movementId);
-    if (movement == null) return;
-    final values = [
-      for (final rep in movement.reps)
-        if (read(rep) case final v?) v
-    ];
-    if (values.isEmpty) return;
-    final mean = values.reduce((a, b) => a + b) / values.length;
+  for (final joint in MobilityJoint.values) {
+    final reps = mobilityJointReps(record, joint);
+    if (reps.isEmpty) continue;
+    final mean =
+        reps.fold<double>(0, (s, r) => s + r.angle) / reps.length;
     out[joint] = (mean * 10).roundToDouble() / 10;
   }
-
-  double? flexion(RepMeasurement rep, String key) {
-    final v = rep.angles[key];
-    return v == null ? null : max(0, 180 - v).toDouble();
-  }
-
-  const abduction = 'abducao_ombro';
-  const squat = 'agachamento_perfil_dir';
-  add(MobilityJoint.ombroDir, abduction, (r) => r.angles['ombro_dir']);
-  add(MobilityJoint.ombroEsq, abduction, (r) => r.angles['ombro_esq']);
-  add(MobilityJoint.quadril, squat, (r) => flexion(r, 'quadril_dir'));
-  add(MobilityJoint.joelho, squat, (r) => flexion(r, 'joelho_dir'));
-  add(MobilityJoint.tornozelo, squat, (r) {
-    final rest = r.restAngles['tornozelo_dir'];
-    final peak = r.angles['tornozelo_dir'];
-    return rest == null || peak == null ? null : max(0, rest - peak).toDouble();
-  });
   return out;
 }

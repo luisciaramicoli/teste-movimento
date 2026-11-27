@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,7 +7,8 @@ import '../flow.dart';
 import '../models/assessment_models.dart';
 import '../models/mobility_score.dart';
 import '../models/perfil_avaliado.dart';
-import '../services/assessment_csv.dart';
+import '../models/reference_norms.dart';
+import '../services/assessment_pdf.dart';
 import '../services/assessment_history_store.dart';
 import 'assessment_screen.dart';
 
@@ -26,9 +29,6 @@ String _decimal(double v) => v.toStringAsFixed(1).replaceAll('.', ',');
 
 /// Graus com até 1 casa decimal ("120°", "132,7°").
 String _degrees(double v) => '${_decimal(v).replaceAll(RegExp(r',0$'), '')}°';
-
-/// Score no formato "9 (8,7)": inteiro e, entre parênteses, o detalhe.
-String _scoreText(double v) => '${v.round()} (${_decimal(v)})';
 
 /// Tela 4: resultado da avaliação — cabeçalho do avaliado, score, meta e uma
 /// barra por articulação.
@@ -156,8 +156,17 @@ class _ResultScreenState extends State<ResultScreen> {
   late AssessmentRecord _record = widget.record;
   List<AssessmentRecord> _history = const [];
 
-  PerfilAvaliado get _perfil =>
-      widget.perfil ?? widget.fluxo?.perfil ?? const PerfilAvaliado();
+  bool _exporting = false;
+  PerfilAvaliado get _perfil {
+    final provided = _record.id == widget.record.id
+        ? widget.perfil ?? widget.fluxo?.perfil
+        : null;
+    return PerfilAvaliado(
+      idade: _record.idade ?? provided?.idade,
+      pesoKg: _record.pesoKg ?? provided?.pesoKg,
+      jornadaMeses: _record.jornadaMeses ?? provided?.jornadaMeses ?? 3,
+    );
+  }
 
   @override
   void initState() {
@@ -199,7 +208,12 @@ class _ResultScreenState extends State<ResultScreen> {
     for (final spec in _rows) {
       final joint = result.joint(spec.joint);
       if (joint == null) continue;
-      rows.add(_JointRow(spec: spec, result: joint, months: months));
+      rows.add(_JointRow(
+        spec: spec,
+        result: joint,
+        months: months,
+        onChartTap: () => _showJointDetailsSheet(spec, joint, months),
+      ));
       if (spec.joint == MobilityJoint.ombroEsq &&
           asymmetry != null &&
           asymmetry.alert) {
@@ -233,8 +247,8 @@ class _ResultScreenState extends State<ResultScreen> {
                 Center(child: _historyPill(selectedIndex)),
                 const SizedBox(height: 23),
                 _header(result.score),
-                const SizedBox(height: 10),
-                _scoreSummary(result, months),
+                if (result.score == null)
+                  Text('Score indisponível. Falta medir: ${result.missing.map((j) => j.label).join(', ')}.'),
                 const SizedBox(height: 23),
                 if (rows.isEmpty)
                   const Padding(
@@ -330,49 +344,11 @@ class _ResultScreenState extends State<ResultScreen> {
         ]),
       );
 
-  /// Score e meta; explica quando o score não pode ser calculado.
-  Widget _scoreSummary(MobilityScore result, int months) {
-    final score = result.score;
-    final goal = result.goalScore(months);
-    const strong = TextStyle(
-        fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black);
-    const small = TextStyle(fontSize: 12, color: _Fig.text);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-          color: _Fig.card,
-          border: Border.all(color: _Fig.cardBorder),
-          borderRadius: BorderRadius.circular(_Fig.radius)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (score == null || goal == null) ...[
-          const Text('Score indisponível', style: strong),
-          const SizedBox(height: 4),
-          Text(
-              'Sem medida válida de: '
-              '${result.missing.map((j) => j.label).join(', ')}.',
-              style: small),
-        ] else
-          Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              spacing: 12,
-              runSpacing: 4,
-              children: [
-                Text('Score ${_scoreText(score)}', style: strong),
-                Text(
-                    'Meta $months ${months == 1 ? 'mês' : 'meses'}: '
-                    '${_scoreText(goal)}',
-                    style: strong),
-              ]),
-        if (result.reference.provisional) ...[
-          const SizedBox(height: 6),
-          Text(
-              'Referências provisórias. '
-              '${result.reference.note ?? 'Valores ilustrativos.'}',
-              style: small),
-        ],
-      ]),
-    );
-  }
+  static BoxDecoration _cardDecoration() => BoxDecoration(
+        color: _Fig.card,
+        border: Border.all(color: _Fig.cardBorder),
+        borderRadius: BorderRadius.circular(_Fig.radius),
+      );
 
   Widget _header(double? score) {
     final p = _perfil;
@@ -389,14 +365,9 @@ class _ResultScreenState extends State<ResultScreen> {
         letterSpacing: -0.8,
         color: Color(0xEE464646));
 
-    BoxDecoration box() => BoxDecoration(
-        color: _Fig.card,
-        border: Border.all(color: _Fig.cardBorder),
-        borderRadius: BorderRadius.circular(_Fig.radius));
-
-    final profile = Container(
+    return Container(
       height: 109,
-      decoration: box(),
+      decoration: _cardDecoration(),
       child: Stack(clipBehavior: Clip.none, children: [
         // Selo da nota (retângulo com ponta à direita).
         Positioned(
@@ -410,12 +381,12 @@ class _ResultScreenState extends State<ResultScreen> {
                 borderRadius: BorderRadius.circular(10)),
           ),
         ),
-        Positioned(
+        const Positioned(
           left: 83,
           top: 22.5,
           child: CustomPaint(
-              size: const Size(15, 26),
-              painter: _PointerPainter(const Color(0xFFB0CDD9))),
+              size: Size(15, 26),
+              painter: _PointerPainter(Color(0xFFB0CDD9))),
         ),
         // Boneco (image 284: 107x120 em left 75, top 178 do Figma).
         const Positioned(
@@ -438,88 +409,35 @@ class _ResultScreenState extends State<ResultScreen> {
                     color: Color(0xFF137C9D))),
           ),
         ),
-        Positioned(
+        const Positioned(
             left: 46,
             top: 19,
             width: 33,
             height: 30,
             child: Center(child: Text('/10', style: scoreGrey))),
-        Positioned(
+        const Positioned(
             left: 13,
             top: 47,
             width: 67,
             height: 30,
             child: Center(child: Text('Atual', style: scoreGrey))),
-        const Positioned(left: 151, top: 13, child: Text('Idade', style: small)),
-        Positioned(
-            left: 151,
-            top: 30,
-            child: Text(p.idade == null ? '--' : '${p.idade} anos', style: value)),
-        const Positioned(left: 151, top: 59, child: Text('Peso', style: small)),
-        Positioned(
-            left: 151,
-            top: 76,
-            child: Text(p.pesoKg == null ? '--' : '${n(p.pesoKg)}kg',
-                style: value)),
-      ]),
-    );
-
-    final reach = Container(
-      height: 109,
-      decoration: box(),
-      child: Stack(children: [
-        const Positioned(
-            top: 13,
-            left: 0,
-            right: 0,
-            child: Center(child: Text('Alcance', style: small))),
-        Positioned(
-            top: 35,
-            left: 0,
-            right: 0,
-            child: Center(
-                child: Text(p.alcanceTexto ?? n(p.alcanceCm),
-                    style: const TextStyle(
-                        fontSize: 24,
-                        height: 28 / 24,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black)))),
-        const Positioned(
-            top: 67,
-            left: 0,
-            right: 0,
-            child: Center(
-                child: Text('cm',
-                    style: TextStyle(
-                        fontSize: 8, height: 9 / 8, color: _Fig.text)))),
-        if (p.alcanceClassificacao != null)
-          Positioned(
-            top: 81,
-            left: 7,
-            right: 7,
-            child: Container(
-              height: 21,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  color: const Color(0x6BE86969),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Text(p.alcanceClassificacao!,
-                  style: const TextStyle(
-                      fontSize: 12,
-                      height: 15 / 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.05,
-                      color: Color(0xFF913939))),
-            ),
+        Align(
+          alignment: const Alignment(0.68, 0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Idade', style: small),
+              Text(p.idade == null ? '--' : '${p.idade} anos', style: value),
+              const SizedBox(height: 6),
+              const Text('Peso', style: small),
+              Text(p.pesoKg == null ? '--' : '${n(p.pesoKg)} kg', style: value),
+            ],
           ),
+        ),
       ]),
     );
 
-    return Row(children: [
-      Expanded(flex: 229, child: profile),
-      const SizedBox(width: 5),
-      Expanded(flex: 102, child: reach),
-    ]);
   }
 
   Widget _buttons() {
@@ -527,6 +445,7 @@ class _ResultScreenState extends State<ResultScreen> {
     Widget pill(
         {required Color bg,
         required Color fg,
+        Color? borderColor,
         required IconData icon,
         required double iconSize,
         required String text,
@@ -537,9 +456,12 @@ class _ResultScreenState extends State<ResultScreen> {
           width: 141,
           height: 41,
           alignment: Alignment.center,
-          decoration:
-              BoxDecoration(color: bg, borderRadius: BorderRadius.circular(42)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
+          decoration: BoxDecoration(
+            color: bg,
+            border: borderColor == null ? null : Border.all(color: borderColor),
+            borderRadius: BorderRadius.circular(42),
+          ),
+          child: FittedBox(fit: BoxFit.scaleDown, child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(icon, size: iconSize, color: fg),
             const SizedBox(width: 10),
             Text(text,
@@ -549,7 +471,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.5,
                     color: fg)),
-          ]),
+          ])),
         ),
       );
     }
@@ -574,21 +496,393 @@ class _ResultScreenState extends State<ResultScreen> {
         ],
         pill(
           bg: _Fig.card,
-          fg: const Color(0xFF777777),
-          icon: Icons.picture_as_pdf,
-          iconSize: 15,
+          fg: _Fig.text,
+          borderColor: _Fig.cardBorder,
+          icon: Icons.picture_as_pdf_outlined,
+          iconSize: 18,
           text: 'Relatório',
-          onTap: () async {
-            await Clipboard.setData(
-                ClipboardData(text: AssessmentCsv.build(_record)));
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Relatório (CSV) copiado.')));
-            }
-          },
+          onTap: _exportPdf,
         ),
       ],
     );
+  }
+  String _formatDateShort(DateTime d) {
+    String p(int n) => n.toString().padLeft(2, '0');
+    return '${p(d.day)}/${p(d.month)}/${d.year}';
+  }
+
+  Color _bandColor(MobilityBand band) => switch (band) {
+        MobilityBand.adequada => _Fig.green,
+        MobilityBand.reduzida => _Fig.amber,
+        MobilityBand.limitada => _Fig.red,
+      };
+
+  Widget _studyReference(MobilityJoint joint) {
+    if (joint == MobilityJoint.ombroDir || joint == MobilityJoint.ombroEsq) {
+      return Text(
+        'Abdução ativa · Gill et al. (2020)\n'
+        'Médias ponderadas dos 2.404 adultos da tabela 2, reunindo todas as '
+        'idades e ambos os sexos: ${_degrees(pooledShoulderRightMean)} à direita '
+        'e ${_degrees(pooledShoulderLeftMean)} à esquerda.',
+      );
+    }
+    if (joint == MobilityJoint.tornozelo) {
+      return Text(
+        'Dorsiflexão direita · Endo et al. (2020), tabela 1\n'
+        'Média de ${_degrees(squatAnkleRightMean)} e desvio-padrão de '
+        '${_degrees(squatAnkleRightSd)} no fundo do agachamento profundo de '
+        'nove homens jovens. O app estima a amplitude pela variação entre '
+        'a posição em pé e o fundo de cada repetição.',
+      );
+    }
+    final hip = joint == MobilityJoint.quadril;
+    final rows = {
+      'Direito': hip ? squatHipRight : squatKneeRight,
+      'Esquerdo': hip ? squatHipLeft : squatKneeLeft,
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Agachamento profundo · Endo et al. (2020)'),
+        const Text('Nove homens, idade média de 18,3 anos, com os braços '
+            'elevados. Medidas no ponto mais profundo; o quadril foi medido em '
+            'relação à pelve.'),
+        for (final side in rows.entries)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('${side.key} · média ± desvio-padrão '
+                '${_degrees(side.value.mean)} ± ${_degrees(side.value.sd)}'),
+          ),
+      ],
+    );
+  }
+
+  void _showJointDetailsSheet(
+      _RowSpec spec, JointScore joint, int months) {
+    final reps = mobilityJointReps(_record, spec.joint);
+    final sd = joint.deviation;
+    final bandColor = _bandColor(joint.band);
+    final goalText = joint.atReference
+        ? 'Manter'
+        : _degrees(joint.goalAngle(months));
+
+    // Evolução desta articulação no histórico do voluntário (cronológico).
+    final evolution = <({
+      AssessmentRecord record,
+      double angle,
+      bool current,
+    })>[];
+    for (final rec in _history) {
+      final a = mobilityAngles(rec)[spec.joint];
+      if (a != null) {
+        evolution.add((record: rec, angle: a, current: rec.id == _record.id));
+      }
+    }
+    evolution.sort((a, b) => a.record.createdAt.compareTo(b.record.createdAt));
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.72,
+        minChildSize: 0.45,
+        maxChildSize: 0.92,
+        builder: (_, scrollController) => ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 28),
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD0D0D0),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                _KeyedImage(
+                  spec.image,
+                  width: 40,
+                  height: 40,
+                  flip: spec.flip,
+                  cropRight: spec.cropRight,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        spec.label,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: bandColor.withOpacity(0.22),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          joint.band.label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _Fig.text,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: _Fig.text),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Cartões de resumo métrico
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _metricTile('Média medida', _degrees(joint.angle),
+                    highlight: true),
+                _metricTile('Referência', _degrees(joint.reference)),
+                _metricTile(
+                    'Meta ($months ${months == 1 ? 'mês' : 'meses'})', goalText),
+                _metricTile('Nota', '${_decimal(joint.grade)} / 10'),
+                _metricTile('% da Ref.', '${joint.percent.round()}%'),
+                if (sd != null)
+                  _metricTile('DP das repetições', '±${_decimal(sd)}°'),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _studyReference(joint.joint),
+            const SizedBox(height: 20),
+            const Text(
+              'Repetições medidas',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: Colors.black,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (reps.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: _cardDecoration(),
+                child: const Text(
+                  'Sem repetições individuais registradas para esta articulação.',
+                  style: TextStyle(fontSize: 13, color: _Fig.text),
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                decoration: _cardDecoration(),
+                child: _RepBarChart(
+                  reps: reps,
+                  reference: joint.reference,
+                ),
+              ),
+            if (evolution.length >= 2) ...[
+              const SizedBox(height: 22),
+              Text(
+                'Evolução no histórico (${evolution.length} avaliações)',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: _cardDecoration(),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < evolution.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      _evolutionRow(
+                        testNumber: evolution[i].record.testNumber,
+                        dateLabel:
+                            _formatDateShort(evolution[i].record.createdAt),
+                        angle: evolution[i].angle,
+                        reference: joint.reference,
+                        delta: i == 0
+                            ? null
+                            : evolution[i].angle - evolution[i - 1].angle,
+                        isCurrent: evolution[i].current,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metricTile(String label, String value, {bool highlight = false}) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 100),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: highlight ? const Color(0xFFE6F3F7) : _Fig.card,
+        border: Border.all(
+            color: highlight ? const Color(0xFF137C9D) : _Fig.cardBorder),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF555555))),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: highlight ? const Color(0xFF137C9D) : Colors.black,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _evolutionRow({
+    required int testNumber,
+    required String dateLabel,
+    required double angle,
+    required double reference,
+    required double? delta,
+    required bool isCurrent,
+  }) {
+    final band = mobilityBand(angle, reference);
+    final barColor = _bandColor(band);
+    final frac = (angle / reference).clamp(0.0, 1.0);
+    final deltaText = delta == null
+        ? null
+        : '${delta >= 0 ? '+' : ''}${_decimal(delta)}°';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Teste $testNumber · $dateLabel',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+                color: isCurrent ? const Color(0xFF137C9D) : _Fig.text,
+              ),
+            ),
+            if (isCurrent) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF137C9D).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Atual',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF137C9D),
+                  ),
+                ),
+              ),
+            ],
+            const Spacer(),
+            Text(
+              _degrees(angle),
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Colors.black,
+              ),
+            ),
+            if (deltaText != null) ...[
+              const SizedBox(width: 6),
+              Text(
+                deltaText,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: delta! >= 0
+                      ? const Color(0xFF2E6B1E)
+                      : const Color(0xFF913939),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: frac,
+            minHeight: 7,
+            backgroundColor: _Fig.track,
+            valueColor: AlwaysStoppedAnimation<Color>(barColor),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _exportPdf() async {
+    if (_exporting) return;
+    _exporting = true;
+    final record = _record;
+    try {
+      final bytes = await buildAssessmentPdf(record, _perfil);
+      if (!mounted) return;
+      final saved = await const MethodChannel('movimento/relatorio')
+          .invokeMethod<bool>('salvarPdf', {
+        'nome': 'Mobilidade-${record.volunteerCode}-teste-${record.testNumber}.pdf',
+        'bytes': bytes,
+      });
+      if (mounted && saved == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Relatório PDF salvo.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Falha ao salvar o PDF. Tente novamente.')),
+        );
+      }
+    } finally {
+      _exporting = false;
+    }
   }
 }
 
@@ -615,8 +909,13 @@ class _JointRow extends StatelessWidget {
   final _RowSpec spec;
   final JointScore result;
   final int months;
-  const _JointRow(
-      {required this.spec, required this.result, required this.months});
+  final VoidCallback onChartTap;
+  const _JointRow({
+    required this.spec,
+    required this.result,
+    required this.months,
+    required this.onChartTap,
+  });
 
   static const TextStyle _zone = TextStyle(
       fontSize: 12, height: 14 / 12, color: _Fig.text);
@@ -676,17 +975,30 @@ class _JointRow extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                     color: Colors.black)),
           ),
-          // Botão de gráfico (46x26, borda B9B9B9).
+          // Botão de gráfico (46x26, abre detalhes e gráfico de repetições).
           Positioned(
             right: 6,
             top: 6,
             width: 46,
             height: 26,
-            child: Container(
-              decoration: BoxDecoration(
-                  border: Border.all(color: _Fig.cardBorder),
-                  borderRadius: BorderRadius.circular(31)),
-              child: const Icon(Icons.bar_chart, size: 18, color: _Fig.cardBorder),
+            child: Semantics(
+              button: true,
+              label: 'Ver gráfico e detalhes de ${spec.label}',
+              child: Material(
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(31),
+                  side: const BorderSide(color: Color(0xFF137C9D)),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(31),
+                  onTap: onChartTap,
+                  child: const Center(
+                    child: Icon(Icons.bar_chart,
+                        size: 18, color: Color(0xFF137C9D)),
+                  ),
+                ),
+              ),
             ),
           ),
           // Trilha, preenchimento e marcador.
@@ -736,4 +1048,160 @@ class _JointRow extends StatelessWidget {
       }),
     );
   }
+}
+
+class _RepBarChart extends StatelessWidget {
+  final List<({int index, double angle})> reps;
+  final double reference;
+
+  const _RepBarChart({
+    required this.reps,
+    required this.reference,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final maxRep =
+        reps.fold<double>(0, (m, r) => math.max(m, r.angle));
+    final maxY = math.max(reference, maxRep) * 1.15;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Container(
+              width: 14,
+              height: 2,
+              color: const Color(0xFF137C9D),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Referência: ${_degrees(reference)}',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF137C9D),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 168,
+          child: CustomPaint(
+            painter: _RepBarChartPainter(
+              reps: reps,
+              reference: reference,
+              maxY: maxY <= 0 ? 1 : maxY,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RepBarChartPainter extends CustomPainter {
+  final List<({int index, double angle})> reps;
+  final double reference;
+  final double maxY;
+
+  const _RepBarChartPainter({
+    required this.reps,
+    required this.reference,
+    required this.maxY,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double topPad = 22;
+    const double bottomPad = 24;
+    const double sidePad = 8;
+    final chartH = math.max(10.0, size.height - topPad - bottomPad);
+    final chartW = math.max(10.0, size.width - sidePad * 2);
+    final baseY = topPad + chartH;
+
+    // Eixo base
+    canvas.drawLine(
+      Offset(sidePad, baseY),
+      Offset(size.width - sidePad, baseY),
+      Paint()
+        ..color = _Fig.cardBorder
+        ..strokeWidth = 1,
+    );
+
+    // Barras por repetição
+    final slotW = chartW / reps.length;
+    final barW = math.min(44.0, slotW * 0.56);
+
+    for (var i = 0; i < reps.length; i++) {
+      final rep = reps[i];
+      final band = mobilityBand(rep.angle, reference);
+      final barColor = switch (band) {
+        MobilityBand.adequada => _Fig.green,
+        MobilityBand.reduzida => _Fig.amber,
+        MobilityBand.limitada => _Fig.red,
+      };
+      final barH = (rep.angle / maxY).clamp(0.0, 1.0) * chartH;
+      final cx = sidePad + slotW * (i + 0.5);
+      final rect = RRect.fromRectAndCorners(
+        Rect.fromLTWH(cx - barW / 2, baseY - barH, barW, barH),
+        topLeft: const Radius.circular(6),
+        topRight: const Radius.circular(6),
+      );
+      canvas.drawRRect(rect, Paint()..color = barColor);
+
+      // Valor acima da barra
+      _drawText(
+        canvas,
+        _degrees(rep.angle),
+        Offset(cx, baseY - barH - 16),
+        const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.black,
+        ),
+      );
+
+      // Rótulo no eixo X
+      _drawText(
+        canvas,
+        'Rep ${rep.index}',
+        Offset(cx, baseY + 6),
+        const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: _Fig.text,
+        ),
+      );
+    }
+
+    // Linha tracejada da referência
+    final refY = baseY - (reference / maxY).clamp(0.0, 1.0) * chartH;
+    final dashPaint = Paint()
+      ..color = const Color(0xFF137C9D)
+      ..strokeWidth = 1.6;
+    const double dashW = 6;
+    const double gapW = 4;
+    double x = sidePad;
+    while (x < size.width - sidePad) {
+      final x2 = math.min(x + dashW, size.width - sidePad);
+      canvas.drawLine(Offset(x, refY), Offset(x2, refY), dashPaint);
+      x += dashW + gapW;
+    }
+  }
+
+  void _drawText(Canvas canvas, String text, Offset centerTop, TextStyle style) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(centerTop.dx - tp.width / 2, centerTop.dy));
+  }
+
+  @override
+  bool shouldRepaint(covariant _RepBarChartPainter old) =>
+      old.reps != reps || old.reference != reference || old.maxY != maxY;
 }

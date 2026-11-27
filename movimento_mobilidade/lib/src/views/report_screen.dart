@@ -54,39 +54,45 @@ class _ReportScreenState extends State<ReportScreen>
   Future<void> _exportCsv() async {
     final controller = TextEditingController();
     String? error;
-    final code = await showDialog<String>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Exportar CSV'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.characters,
-            decoration: InputDecoration(
-              labelText: 'Código do voluntário',
-              hintText: 'Ex.: V01',
-              errorText: error,
+    final String? code;
+    try {
+      code = await showDialog<String>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('Exportar CSV'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                labelText: 'Código do voluntário',
+                hintText: 'Ex.: V01',
+                errorText: error,
+              ),
             ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancelar')),
+              TextButton(
+                onPressed: () {
+                  if (SessionCsvExporter.isValidVolunteerCode(controller.text)) {
+                    Navigator.pop(ctx, controller.text);
+                  } else {
+                    setLocal(() =>
+                        error = 'Use um código como V01. Não digite nomes.');
+                  }
+                },
+                child: const Text('Exportar'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancelar')),
-            TextButton(
-              onPressed: () {
-                if (SessionCsvExporter.isValidVolunteerCode(controller.text)) {
-                  Navigator.pop(ctx, controller.text);
-                } else {
-                  setLocal(() => error = 'Use um código como V01. Não digite nomes.');
-                }
-              },
-              child: const Text('Exportar'),
-            ),
-          ],
         ),
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
     if (code == null || !mounted) return;
     final csv = SessionCsvExporter.build(
       volunteerCode: code,
@@ -97,20 +103,15 @@ class _ReportScreenState extends State<ReportScreen>
     await Clipboard.setData(ClipboardData(text: csv));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('CSV copiado. Cole em uma planilha ou em um arquivo .csv.')));
+        content: Text(
+            'CSV copiado. Cole em uma planilha ou em um arquivo .csv.')));
   }
 
   List<MobilityDeficitItem> get _allDeficits =>
       widget.completedPostures.expand((p) => p.deficits).toList();
 
-  double get _overallMobilityScore {
-    if (widget.completedPostures.isEmpty) return 0.0;
-    final sum = widget.completedPostures.fold<double>(
-      0.0,
-      (acc, p) => acc + p.accuracyScorePct,
-    );
-    return sum / widget.completedPostures.length;
-  }
+  double get _overallMobilityScore =>
+      ProtocolSessionResult.averageAccuracy(widget.completedPostures);
 
   @override
   Widget build(BuildContext context) {

@@ -1,31 +1,28 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
-import 'package:camera/camera.dart';
-import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 import '../models/joint_angle.dart';
 import '../models/perfil_avaliado.dart';
 import '../models/protocol_models.dart';
-import '../services/pose_detector_service.dart';
+import '../services/pose_camera_session.dart';
 import '../services/protocol_service.dart';
 import '../services/rep_counter_service.dart';
 import '../services/performance_monitor.dart';
+import '../theme/app_theme.dart';
 import '../painters/pose_painter.dart';
 import 'report_screen.dart';
 
 class CameraScreen extends StatefulWidget {
-  final bool initialSimulationMode;
   final PerfilAvaliado? perfil;
+
+  /// Recebe os valores sempre que uma sessão com posturas avaliadas termina.
+  final ValueChanged<ProtocolSessionResult>? onSessionFinished;
 
   const CameraScreen({
     super.key,
-    this.initialSimulationMode = false,
     this.perfil,
+    this.onSessionFinished,
   });
 
   @override
@@ -34,20 +31,18 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
-  CameraController? _cameraController;
-  List<CameraDescription> _cameras = [];
-  int _selectedCameraIndex = 0;
-  bool _isCameraInitialized = false;
-  bool _isProcessingFrame = false;
+  /// Mesma sessão da avaliação: MediaPipe, com ML Kit de reserva.
+  PoseCameraSession? _camera;
+  bool _isInitializingCamera = false;
+  bool _isDisposed = false;
   bool _isPausedForReport = false;
   int _lastRenderTickMs = 0;
 
-  late final PoseDetectorService _poseService;
   late final JointAngleTracker _tracker;
   late final ProtocolService _protocol;
   late final RepCounterService _repCounter;
 
-  // Pose bruta vinda do ML Kit para o banner superior
+  // Pose bruta do detector para o banner superior
   final ValueNotifier<ExtractedPoseData?> _poseNotifier =
       ValueNotifier<ExtractedPoseData?>(null);
 
@@ -61,32 +56,22 @@ class _CameraScreenState extends State<CameraScreen>
   ExtractedPoseData? _currentInterpolatedPose;
   Ticker? _renderTicker;
 
-  int _lastSubWidth = 720;
-  int _lastSubHeight = 480;
-
   int _renderFrameCount = 0;
   DateTime _lastRenderFpsTime = DateTime.now();
   double _renderFps = 60.0;
-  int _emptyPoseFrames = 0;
 
-  static const Map<DeviceOrientation, int> _orientations = {
-    DeviceOrientation.portraitUp: 0,
-    DeviceOrientation.landscapeLeft: 90,
-    DeviceOrientation.portraitDown: 180,
-    DeviceOrientation.landscapeRight: 270,
-  };
+  /// Motivo de a câmera não ter aberto; enquanto houver, nada é medido.
+  String? _cameraError;
 
-  bool _isMirror = false;
-  bool _isSimulationMode = false;
-  Timer? _simulationTimer;
-  double _simTime = 0.0;
+  /// Motores que processaram os quadros avaliados.
+  final Set<String> _engines = {};
+
   final Stopwatch _stopwatch = Stopwatch();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _poseService = PoseDetectorService();
     _tracker = JointAngleTracker();
     _protocol = ProtocolService(
       stage: ProtocolStage.positioning,
@@ -96,12 +81,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     _renderTicker = createTicker(_onRenderTick)..start();
 
-    _isSimulationMode = widget.initialSimulationMode;
-    if (_isSimulationMode) {
-      _startSimulation();
-    } else {
-      _initCamera();
-    }
+    _initCamera();
   }
 
   /// Interpola suavemente a 60 FPS contínuos os pontos e ângulos em direção à última leitura
@@ -208,6 +188,7 @@ class _CameraScreenState extends State<CameraScreen>
       calfElevationRightPct: target.calfElevationRightPct,
       bodyOrientationAngle: target.bodyOrientationAngle,
       bodyOrientationLabel: target.bodyOrientationLabel,
+      mirrored: target.mirrored,
     );
 
     _currentInterpolatedPose = nextPose;
@@ -215,100 +196,79 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _initCamera() async {
-    try {
-      _cameras = await availableCameras();
-      if (_cameras.isEmpty) {
-        _fallbackToSimulation();
-        return;
-      }
+    if (_isInitializingCamera || _isDisposed) return;
+    _isInitializingCamera = true;
+    if (_cameraError != null) setState(() => _cameraError = null);
 
-      final frontIndex = _cameras.indexWhere(
-        (c) => c.lensDirection == CameraLensDirection.front,
-      );
-      _selectedCameraIndex = frontIndex >= 0 ? frontIndex : 0;
-      final camera = _cameras[_selectedCameraIndex];
-      _isMirror = camera.lensDirection == CameraLensDirection.front;
+    final session = PoseCameraSession(
+      onPose: _onPose,
+      screenSize: () => MediaQuery.of(context).size,
+      // Os ângulos-alvo das posturas dependem desta compensação.
+      compensatePerspective: true,
+    );
+    _camera = session;
+    final error = await session.start(onPreviewReady: _onPreviewReady);
+    _isInitializingCamera = false;
 
-      _cameraController = CameraController(
-        camera,
-        ResolutionPreset.medium,
-        enableAudio: false,
-        imageFormatGroup: Platform.isAndroid
-            ? ImageFormatGroup.yuv420
-            : ImageFormatGroup.bgra8888,
-      );
-      await _cameraController!.initialize();
-      try {
-        await _cameraController!.lockCaptureOrientation(
-            DeviceOrientation.portraitUp);
-      } catch (_) {}
-      if (!mounted) return;
-
-      setState(() {
-        _isCameraInitialized = true;
-      });
-
-      _stopwatch
-        ..reset()
-        ..start();
-      _cameraController!.startImageStream(_processCameraFrame);
-    } catch (e) {
-      debugPrint('Erro ao inicializar câmera: $e');
-      _fallbackToSimulation();
+    if (error != null && mounted && !_isDisposed) {
+      await _stopCamera();
+      _showCameraError(error);
     }
   }
 
-  void _fallbackToSimulation() {
+  void _onPreviewReady() {
     if (!mounted) return;
-    setState(() {
-      _isSimulationMode = true;
-    });
-    _startSimulation();
-  }
-
-  void _startSimulation() {
     _stopwatch
       ..reset()
       ..start();
-    _simulationTimer?.cancel();
-    _simulationTimer =
-        Timer.periodic(const Duration(milliseconds: 33), (timer) {
-      if (_isPausedForReport) return;
-      _simTime += 0.033;
-      final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
-      final screenSize = MediaQuery.of(context).size;
-
-      final extracted =
-          _poseService.generateSyntheticAngles(_simTime, screenSize);
-      _tracker.update(
-        extracted.angles,
-        elapsed,
-        calfLeftPct: extracted.calfElevationLeftPct,
-        calfRightPct: extracted.calfElevationRightPct,
-      );
-      final stageChanged = _protocol.update(extracted, screenSize, elapsed);
-      if (stageChanged && mounted) {
-        setState(() {});
-        if (_protocol.stage == ProtocolStage.completed) {
-          _finishSession();
-          return;
-        }
-      }
-
-      if (mounted) {
-        _latestTargetPose = extracted;
-        _poseNotifier.value = extracted;
-        _fpsNotifier.value = 30.0;
-      }
-    });
+    setState(() {});
   }
+
+  void _showCameraError(String message) {
+    if (!mounted) return;
+    setState(() => _cameraError = message);
+  }
+
+  Widget _buildCameraError(String message) => Theme(
+        data: AppTheme.camera,
+        child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('Câmera indisponível',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Text(message, style: const TextStyle(color: Colors.white70)),
+                const SizedBox(height: 24),
+                FilledButton(
+                    onPressed: _initCamera,
+                    child: const Text('Tentar novamente')),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: const Text('Voltar')),
+              ],
+            ),
+          ),
+        ),
+        ),
+      );
 
   void _resetSessionData() {
     _perf.reset();
     _tracker.resetAll();
     _protocol.reset();
     _repCounter.reset();
-    _poseService.resetSmoothing();
+    _engines.clear();
+    _camera?.poseService.resetSmoothing();
     _stopwatch
       ..reset()
       ..start();
@@ -321,230 +281,62 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  int _getImageRotationDegrees() {
-    if (_cameras.isEmpty) return 0;
-    final camera = _cameras[_selectedCameraIndex];
-    final sensorOrientation = camera.sensorOrientation;
-    if (Platform.isAndroid && _cameraController != null) {
-      var rotationCompensation =
-          _orientations[_cameraController!.value.deviceOrientation];
-      if (rotationCompensation != null) {
-        if (camera.lensDirection == CameraLensDirection.front) {
-          return (sensorOrientation + rotationCompensation) % 360;
-        } else {
-          return (sensorOrientation - rotationCompensation + 360) % 360;
-        }
-      }
-    }
-    return sensorOrientation;
-  }
-
-  int _lastInferenceTimestampMs = 0;
   final PerformanceMonitor _perf = PerformanceMonitor();
 
-  void _processCameraFrame(CameraImage image) async {
-    if (_isProcessingFrame || _isPausedForReport || !mounted) return;
+  /// Recebe cada quadro analisado; [pose] é null sem pessoa na imagem.
+  void _onPose(ExtractedPoseData? pose) {
+    if (!mounted || _isPausedForReport) return;
     if (_protocol.stage == ProtocolStage.postureReplication &&
         _protocol.isShowingPostureIntro) {
       return;
     }
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
-    if (nowMs - _lastInferenceTimestampMs < 20) return;
-    _lastInferenceTimestampMs = nowMs;
+    final screenSize = MediaQuery.of(context).size;
+    final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
 
-    _isProcessingFrame = true;
-    final int captureMs = nowMs;
+    if (pose == null || pose.landmarks.isEmpty) {
+      _protocol.update(null, screenSize, elapsed);
+      _latestTargetPose = null;
+      _currentInterpolatedPose = null;
+      _poseNotifier.value = null;
+      _smoothDisplayPoseNotifier.value = null;
+      return;
+    }
+
+    final session = _camera;
+    if (session != null) _engines.add(session.lastEngine);
+    _tracker.update(
+      pose.angles,
+      elapsed,
+      calfLeftPct: pose.calfElevationLeftPct,
+      calfRightPct: pose.calfElevationRightPct,
+    );
+    final stageChanged = _protocol.update(pose, screenSize, elapsed);
+    _latestTargetPose = pose;
+    _poseNotifier.value = pose;
+    if (stageChanged) {
+      setState(() {});
+      if (_protocol.stage == ProtocolStage.completed) {
+        _finishSession();
+        return;
+      }
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _perf.record(captureMs: now - (session?.latencyMs ?? 0), displayMs: now);
+  }
+
+  Future<void> _switchCamera() async {
+    final session = _camera;
+    if (session == null || _isInitializingCamera || _isDisposed) return;
+    _isInitializingCamera = true;
     try {
-      final screenSize = MediaQuery.of(context).size;
-      final elapsed = _stopwatch.elapsedMilliseconds / 1000.0;
-      final isFront = _cameras.isNotEmpty &&
-          _cameras[_selectedCameraIndex].lensDirection ==
-              CameraLensDirection.front;
-
-      ExtractedPoseData? extracted;
-      final inputImage = _convertCameraImageToInputImage(image);
-      if (inputImage == null) return;
-      final poses = await _poseService.processImage(inputImage);
-
-      if (poses.isNotEmpty) {
-        final pose = poses.first;
-        final bool isRotated = inputImage.metadata?.rotation ==
-                InputImageRotation.rotation90deg ||
-            inputImage.metadata?.rotation ==
-                InputImageRotation.rotation270deg;
-        final double rotatedWidth = isRotated
-            ? _lastSubHeight.toDouble()
-            : _lastSubWidth.toDouble();
-        final double rotatedHeight = isRotated
-            ? _lastSubWidth.toDouble()
-            : _lastSubHeight.toDouble();
-
-        extracted = _poseService.extractAnglesFromPose(
-          pose,
-          inputImageSize: Size(rotatedWidth, rotatedHeight),
-          screenSize: screenSize,
-          isFrontCamera: isFront,
-        );
-      }
-
-      if (mounted && !_isPausedForReport) {
-        if (extracted != null && extracted.landmarks.isNotEmpty) {
-          _emptyPoseFrames = 0;
-          _tracker.update(
-            extracted.angles,
-            elapsed,
-            calfLeftPct: extracted.calfElevationLeftPct,
-            calfRightPct: extracted.calfElevationRightPct,
-          );
-
-          final stageChanged = _protocol.update(extracted, screenSize, elapsed);
-          if (stageChanged && mounted) {
-            setState(() {});
-            if (_protocol.stage == ProtocolStage.completed) {
-              _latestTargetPose = extracted;
-              _poseNotifier.value = extracted;
-              _finishSession();
-              return;
-            }
-          }
-
-          _latestTargetPose = extracted;
-          _poseNotifier.value = extracted;
-          _perf.record(
-              captureMs: captureMs,
-              displayMs: DateTime.now().millisecondsSinceEpoch);
-        } else {
-          _emptyPoseFrames++;
-          if (_emptyPoseFrames > 8) {
-            _poseService.resetSmoothing();
-            _protocol.update(null, screenSize, elapsed);
-            _latestTargetPose = null;
-            _currentInterpolatedPose = null;
-            if (_poseNotifier.value != null) {
-              _poseNotifier.value = null;
-              _smoothDisplayPoseNotifier.value = null;
-            }
-          }
-        }
-      }
-    } catch (e, st) {
-      // ignore: avoid_print
-      print('ERRO_FRAME: $e\n$st');
+      await session.switchCamera(onPreviewReady: _onPreviewReady);
+    } catch (e) {
+      debugPrint('Erro ao trocar câmera: $e');
+      await _stopCamera();
+      _showCameraError('Não foi possível trocar de câmera.');
     } finally {
-      _isProcessingFrame = false;
+      _isInitializingCamera = false;
     }
-  }
-
-  Uint8List? _reusableImageBytes;
-
-  /// Subamostra SEMPRE a imagem da câmera (ex: 720x480 -> 240x160 com step=3) em < 0.15 ms.
-  /// Isso reduz em 9x a quantidade de bytes trafegados via MethodChannel para o Java/ML Kit
-  /// e acelera dramaticamente a etapa de pré-processamento e inferência do BlazePose!
-  InputImage? _convertCameraImageToInputImage(CameraImage image) {
-    if (_cameraController == null) return null;
-
-    final camera = _cameras[_selectedCameraIndex];
-    final sensorOrientation = camera.sensorOrientation;
-
-    InputImageRotation? rotation;
-    if (Platform.isIOS) {
-      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
-    } else if (Platform.isAndroid) {
-      var rotationCompensation =
-          _orientations[_cameraController!.value.deviceOrientation];
-      if (rotationCompensation != null) {
-        if (camera.lensDirection == CameraLensDirection.front) {
-          rotationCompensation =
-              (sensorOrientation + rotationCompensation) % 360;
-        } else {
-          rotationCompensation =
-              (sensorOrientation - rotationCompensation + 360) % 360;
-        }
-        rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
-      }
-    }
-    rotation ??= InputImageRotationValue.fromRawValue(sensorOrientation) ??
-        InputImageRotation.rotation0deg;
-
-    final int srcW = image.width;
-    final int srcH = image.height;
-    _lastSubWidth = srcW;
-    _lastSubHeight = srcH;
-
-    if (!Platform.isAndroid) {
-      return InputImage.fromBytes(
-        bytes: image.planes.first.bytes,
-        metadata: InputImageMetadata(
-          size: Size(srcW.toDouble(), srcH.toDouble()),
-          rotation: rotation,
-          format: InputImageFormat.bgra8888,
-          bytesPerRow: image.planes.first.bytesPerRow,
-        ),
-      );
-    }
-
-    if (image.planes.length == 1) {
-      return InputImage.fromBytes(
-        bytes: image.planes[0].bytes,
-        metadata: InputImageMetadata(
-          size: Size(srcW.toDouble(), srcH.toDouble()),
-          rotation: rotation,
-          format: InputImageFormat.nv21,
-          bytesPerRow: image.planes[0].bytesPerRow,
-        ),
-      );
-    }
-
-    int totalSize = 0;
-    for (final plane in image.planes) {
-      totalSize += plane.bytes.length;
-    }
-    if (_reusableImageBytes == null || _reusableImageBytes!.length != totalSize) {
-      _reusableImageBytes = Uint8List(totalSize);
-    }
-    int offset = 0;
-    for (final plane in image.planes) {
-      _reusableImageBytes!.setRange(offset, offset + plane.bytes.length, plane.bytes);
-      offset += plane.bytes.length;
-    }
-
-    return InputImage.fromBytes(
-      bytes: _reusableImageBytes!,
-      metadata: InputImageMetadata(
-        size: Size(srcW.toDouble(), srcH.toDouble()),
-        rotation: rotation,
-        format: InputImageFormat.nv21,
-        bytesPerRow: image.planes[0].bytesPerRow,
-      ),
-    );
-  }
-
-  void _switchCamera() async {
-    if (_cameras.length < 2) return;
-    _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
-    _isMirror = _cameras[_selectedCameraIndex].lensDirection ==
-        CameraLensDirection.front;
-    _poseService.resetSmoothing();
-
-    await _cameraController?.stopImageStream();
-    await _cameraController?.dispose();
-
-    _cameraController = CameraController(
-      _cameras[_selectedCameraIndex],
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.yuv420
-          : ImageFormatGroup.bgra8888,
-    );
-    await _cameraController!.initialize();
-    try {
-      await _cameraController!.lockCaptureOrientation(
-          DeviceOrientation.portraitUp);
-    } catch (_) {}
-
-    _cameraController!.startImageStream(_processCameraFrame);
-    if (mounted) setState(() {});
   }
 
   Future<void> _finishSession() async {
@@ -554,6 +346,13 @@ class _CameraScreenState extends State<CameraScreen>
     final completedSnapshot = List<PostureEvaluationResult>.from(
       _protocol.completedPostures,
     );
+
+    if (completedSnapshot.isNotEmpty) {
+      widget.onSessionFinished?.call(ProtocolSessionResult(
+        postures: List.unmodifiable(completedSnapshot),
+        engine: _engines.join(' + '),
+      ));
+    }
 
     final shouldRestart = await Navigator.push<bool>(
       context,
@@ -579,12 +378,12 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   void dispose() {
+    _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _renderTicker?.dispose();
-    _simulationTimer?.cancel();
-    _cameraController?.stopImageStream();
-    _cameraController?.dispose();
-    _poseService.dispose();
+    final session = _camera;
+    _camera = null;
+    if (session != null) unawaited(session.dispose());
     _poseNotifier.dispose();
     _smoothDisplayPoseNotifier.dispose();
     _fpsNotifier.dispose();
@@ -594,35 +393,27 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_isSimulationMode) return;
+    // O pedido de permissão também pausa o app: não interrompe a abertura.
+    if (_isDisposed || _isInitializingCamera) return;
 
     if (state == AppLifecycleState.paused) {
       _stopCamera();
-    } else if (state == AppLifecycleState.resumed) {
-      if (_cameraController == null || !_isCameraInitialized) {
-        _initCamera();
-      }
+    } else if (state == AppLifecycleState.resumed && _camera == null) {
+      _initCamera();
     }
   }
 
   Future<void> _stopCamera() async {
-    final controller = _cameraController;
-    _cameraController = null;
-    if (mounted) {
-      setState(() {
-        _isCameraInitialized = false;
-      });
-    }
-    if (controller != null) {
-      try {
-        await controller.stopImageStream();
-      } catch (_) {}
-      await controller.dispose();
-    }
+    final session = _camera;
+    _camera = null;
+    if (session == null) return;
+    if (mounted) setState(() {});
+    await session.dispose();
   }
 
   Widget _buildCameraPreview(Size screenSize) {
-    if (!_isCameraInitialized || _cameraController == null) {
+    final session = _camera;
+    if (session == null || !session.isPreviewReady) {
       return Container(
         color: const Color(0xFF181818),
         child: const Center(
@@ -632,41 +423,14 @@ class _CameraScreenState extends State<CameraScreen>
         ),
       );
     }
-
-    final previewSize = _cameraController!.value.previewSize;
-    final double previewW = previewSize != null ? previewSize.height : 480.0;
-    final double previewH = previewSize != null ? previewSize.width : 720.0;
-
-    Widget previewWidget = SizedBox(
-      width: previewW,
-      height: previewH,
-      child: CameraPreview(_cameraController!),
-    );
-
-    if (_isMirror) {
-      previewWidget = Transform(
-        alignment: Alignment.center,
-        transform: Matrix4.rotationY(pi),
-        child: previewWidget,
-      );
-    }
-
-    return ClipRect(
-      child: Center(
-        child: SizedBox(
-          width: screenSize.width,
-          height: screenSize.height,
-          child: FittedBox(
-            fit: BoxFit.cover,
-            child: previewWidget,
-          ),
-        ),
-      ),
-    );
+    return session.buildPreview(screenSize);
   }
 
   @override
   Widget build(BuildContext context) {
+    final cameraError = _cameraError;
+    if (cameraError != null) return _buildCameraError(cameraError);
+
     final screenSize = MediaQuery.of(context).size;
     final bool showFullScreenBlackIntro =
         _protocol.stage == ProtocolStage.postureReplication &&
@@ -678,20 +442,9 @@ class _CameraScreenState extends State<CameraScreen>
         fit: StackFit.expand,
         children: [
           // 1. Fundo da Câmera
-          if (_isSimulationMode)
-            Container(
-              color: const Color(0xFF181818),
-              child: const Center(
-                child: Text(
-                  'Modo Simulação Ativo',
-                  style: TextStyle(color: Colors.white38, fontSize: 18),
-                ),
-              ),
-            )
-          else
-            RepaintBoundary(
-              child: _buildCameraPreview(screenSize),
-            ),
+          RepaintBoundary(
+            child: _buildCameraPreview(screenSize),
+          ),
 
           // 2. CustomPainter em 60/120 FPS com interpolação suave de ângulos e articulações
           if (!showFullScreenBlackIntro)
@@ -1054,9 +807,7 @@ class _CameraScreenState extends State<CameraScreen>
       commandIcon = Icons.straighten;
     } else if (!pos.isCentered) {
       statusColor = const Color(0xFFFFCC00);
-      bigCommand = pos.horizontalOffset < 0
-          ? 'MOVA-SE PARA A DIREITA ➔'
-          : '⬅ MOVA-SE PARA A ESQUERDA';
+      bigCommand = pos.horizontalMessage.toUpperCase();
       commandIcon = Icons.swap_horiz;
     } else {
       statusColor = const Color(0xFFFFCC00);
@@ -1445,6 +1196,18 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  void _showStatusSnackBar(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(milliseconds: 1000),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
   Widget _buildBottomControls() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1466,39 +1229,10 @@ class _CameraScreenState extends State<CameraScreen>
               tooltip: 'Fazer de Novo / Reiniciar',
               onPressed: () {
                 _resetSessionData();
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Protocolo e valores de ROM reiniciados.'),
-                    duration: Duration(milliseconds: 1000),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                _showStatusSnackBar('Protocolo e valores de ROM reiniciados.');
               },
             ),
-            IconButton.filledTonal(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.swap_horiz, size: 20),
-              tooltip: _isMirror ? 'Modo Espelho (Ativo)' : 'Modo Direto',
-              onPressed: () {
-                setState(() {
-                  _isMirror = !_isMirror;
-                });
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      _isMirror
-                          ? 'Modo Espelho: Câmera e Esqueleto Espelhados'
-                          : 'Modo Direto: Visão Normal',
-                    ),
-                    duration: const Duration(milliseconds: 1000),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              },
-            ),
-            if (_cameras.length > 1)
+            if ((_camera?.cameras.length ?? 0) > 1)
               IconButton.filledTonal(
                 visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.switch_camera_outlined, size: 20),

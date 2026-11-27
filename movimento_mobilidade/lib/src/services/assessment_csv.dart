@@ -1,10 +1,13 @@
 import '../models/assessment_models.dart';
+import '../utils/csv_utils.dart';
 import 'volunteer_code.dart';
 
 /// CSV de uma avaliação (RF09): uma linha por repetição/articulação, mais a
 /// média. Identifica o voluntário só por código (RF10). Campos sem dado ficam
 /// vazios; os contadores de quadros (RF06) valem para o movimento inteiro.
 class AssessmentCsv {
+  AssessmentCsv._();
+
   static const List<String> header = [
     'data_hora',
     'voluntario',
@@ -21,49 +24,53 @@ class AssessmentCsv {
     'quadros_descartados',
   ];
 
-  static String build(AssessmentRecord r) {
+  static String build(AssessmentRecord record) {
     final rows = <List<String>>[header];
-    final when = r.createdAt.toIso8601String();
-    final code = VolunteerCode.sanitize(r.volunteerCode);
-    for (final m in r.movements) {
-      final title = m.spec?.title ?? m.movementId;
-      List<String> row(String rep, String joint, double angle,
-              {double? confidence, double? min, double? max}) =>
+    final when = record.createdAt.toIso8601String();
+    final code = VolunteerCode.sanitize(record.volunteerCode);
+
+    for (final movement in record.movements) {
+      final title = movement.spec?.title ?? movement.movementId;
+
+      List<String> buildRow(
+        String rep,
+        String jointKey,
+        double angle, {
+        double? confidence,
+        double? min,
+        double? max,
+      }) =>
           [
             when,
             code,
-            '${r.testNumber}',
+            '${record.testNumber}',
             title,
             rep,
-            _side(joint),
-            _joint(joint),
+            jointSideLabel(jointKey),
+            jointBaseKey(jointKey),
             angle.toStringAsFixed(1),
             confidence?.toStringAsFixed(2) ?? '',
             min?.toStringAsFixed(1) ?? '',
             max?.toStringAsFixed(1) ?? '',
-            '${m.processedFrames ?? ''}',
-            '${m.discardedFrames ?? ''}',
+            '${movement.processedFrames ?? ''}',
+            '${movement.discardedFrames ?? ''}',
           ];
-      for (final rep in m.reps) {
+
+      for (final rep in movement.reps) {
         rep.angles.forEach((joint, angle) {
-          rows.add(row('${rep.index}', joint, angle,
-              confidence: rep.confidences[joint],
-              min: rep.minAngles[joint],
-              max: rep.maxAngles[joint]));
+          rows.add(buildRow(
+            '${rep.index}',
+            joint,
+            angle,
+            confidence: rep.confidences[joint],
+            min: rep.minAngles[joint],
+            max: rep.maxAngles[joint],
+          ));
         });
       }
-      m.averages.forEach((joint, avg) => rows.add(row('media', joint, avg)));
+      movement.averages
+          .forEach((joint, avg) => rows.add(buildRow('media', joint, avg)));
     }
-    return rows.map((row) => row.map(_escape).join(',')).join('\n');
+    return rows.map((row) => row.map(escapeCsvCell).join(',')).join('\n');
   }
-
-  static String _side(String key) => key.endsWith('_esq')
-      ? 'esquerdo'
-      : (key.endsWith('_dir') ? 'direito' : 'n/a');
-
-  static String _joint(String key) =>
-      key.replaceAll(RegExp(r'_(esq|dir)$'), '');
-
-  static String _escape(String v) =>
-      v.contains(',') || v.contains('"') ? '"${v.replaceAll('"', '""')}"' : v;
 }

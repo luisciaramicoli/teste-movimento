@@ -70,6 +70,10 @@ class ExtractedPoseData {
   /// deduzido da direção do corpo. Null quando não aplicável ou indeterminado.
   final String? visibleSide;
 
+  /// Se as coordenadas estão espelhadas (câmera frontal). Define o que é
+  /// esquerda e direita na tela para a pessoa.
+  final bool mirrored;
+
   const ExtractedPoseData({
     required this.angles,
     required this.landmarks,
@@ -78,6 +82,7 @@ class ExtractedPoseData {
     this.bodyOrientationAngle = 0.0,
     this.bodyOrientationLabel = 'Frontal',
     this.visibleSide,
+    this.mirrored = true,
   });
 
   double get maxCalfElevationPct => max(calfElevationLeftPct, calfElevationRightPct);

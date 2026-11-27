@@ -725,12 +725,11 @@ class ProtocolService {
     bool isCentered = true;
     String horizMsg = 'Centralizado no quadro ✅';
 
-    if (horizOffset < -0.18) {
+    if (horizOffset.abs() > 0.18) {
       isCentered = false;
-      horizMsg = 'Mova-se um pouco para a DIREITA ->';
-    } else if (horizOffset > 0.18) {
-      isCentered = false;
-      horizMsg = '<- Mova-se um pouco para a ESQUERDA';
+      // A direção é a da pessoa: sem espelhamento, os lados se invertem.
+      final toRight = (horizOffset < 0) == poseData.mirrored;
+      horizMsg = 'Mova-se um pouco para a ${toRight ? 'DIREITA' : 'ESQUERDA'}';
     }
 
     double trunkTiltDeg = 0.0;

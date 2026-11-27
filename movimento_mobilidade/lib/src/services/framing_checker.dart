@@ -74,7 +74,7 @@ class FramingChecker {
       return const FramingStatus(
         isInside: false,
         issue: FramingIssue.noPerson,
-        message: 'Fique em frente à câmera, com o corpo inteiro visível.',
+        message: 'Apareça na câmera.',
       );
     }
     final lm = pose.landmarks;
@@ -93,8 +93,7 @@ class FramingChecker {
       return FramingStatus(
         isInside: false,
         issue: FramingIssue.wrongOrientation,
-        message:
-            'Mostre o lado ${nome(side)} do corpo para a câmera (agora aparece o ${nome(shown)}).',
+        message: 'Mostre o lado ${nome(side)}.',
       );
     }
 
@@ -106,7 +105,7 @@ class FramingChecker {
       return const FramingStatus(
         isInside: false,
         issue: FramingIssue.bodyCutOff,
-        message: 'Mostre o corpo inteiro, da cabeça aos pés.',
+        message: 'Mostre o corpo inteiro.',
       );
     }
 
@@ -122,7 +121,7 @@ class FramingChecker {
       return const FramingStatus(
         isInside: false,
         issue: FramingIssue.bodyCutOff,
-        message: 'Parte do corpo saiu da imagem. Afaste-se ou ajuste o celular.',
+        message: 'Corpo fora da imagem.',
       );
     }
 
@@ -134,7 +133,7 @@ class FramingChecker {
       return FramingStatus(
         isInside: false,
         issue: FramingIssue.tooFar,
-        message: 'Dê um passo à frente, até o corpo preencher a moldura.',
+        message: 'Aproxime-se.',
         bodyHeightRatio: ratio,
         horizontalOffset: offset,
       );
@@ -143,7 +142,7 @@ class FramingChecker {
       return FramingStatus(
         isInside: false,
         issue: FramingIssue.tooClose,
-        message: 'Dê um passo para trás, para caber da cabeça aos pés.',
+        message: 'Afaste-se.',
         bodyHeightRatio: ratio,
         horizontalOffset: offset,
       );
@@ -152,9 +151,10 @@ class FramingChecker {
       return FramingStatus(
         isInside: false,
         issue: FramingIssue.offCenter,
-        message: offset < 0
-            ? 'Mova-se um pouco para a direita da imagem.'
-            : 'Mova-se um pouco para a esquerda da imagem.',
+        // A direção é a da pessoa: sem espelhamento, os lados se invertem.
+        message: (offset < 0) == pose.mirrored
+            ? 'Vá para a direita.'
+            : 'Vá para a esquerda.',
         bodyHeightRatio: ratio,
         horizontalOffset: offset,
       );
@@ -165,7 +165,7 @@ class FramingChecker {
       return FramingStatus(
         isInside: false,
         issue: FramingIssue.wrongOrientation,
-        message: 'Vire o corpo de frente para a câmera.',
+        message: 'Fique de frente.',
         bodyHeightRatio: ratio,
         horizontalOffset: offset,
       );
@@ -175,7 +175,7 @@ class FramingChecker {
         isInside: false,
         issue: FramingIssue.wrongOrientation,
         message:
-            'Vire de lado, com o ${view == CaptureView.profileLeft ? 'lado esquerdo' : 'lado direito'} voltado para a câmera.',
+            'Mostre o lado ${view == CaptureView.profileLeft ? 'esquerdo' : 'direito'}.',
         bodyHeightRatio: ratio,
         horizontalOffset: offset,
       );

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Identidade visual "Composição corporal": fundo branco,
-/// header preto, botões pílula pretos, cards brancos arredondados e
-/// destaques em vermelho/verde.
+/// Identidade visual principal da biblioteca (fluxo guiado).
 class AppColors {
+  AppColors._();
+
   static const Color background = Color(0xFFFFFFFF);
   static const Color header = Color(0xFF0B0B0B);
   static const Color surface = Color(0xFFFFFFFF);
@@ -18,30 +18,50 @@ class AppColors {
   static const Color warn = Color(0xFFE0A030);
   static const Color error = Color(0xFFE86969);
 
-  /// Texto e fundo (42% de opacidade) das etiquetas de alerta, como o "Ruim".
+  /// Texto e fundo (42% de opacidade) das etiquetas de alerta.
   static const Color alertText = Color(0xFF913939);
   static const Color alertBg = Color(0x6BE86969);
 }
 
-/// Cores do painel sobre a câmera (tela de captura permanece escura).
-class CameraColors {
-  static const Color panel = Color(0xE6171D24);
-  static const Color border = Color(0xFF2B343E);
-  static const Color textSecondary = Color(0xFF9AA5B1);
+/// Tokens de cores e raios da tela de resultado (layout Figma 393 px).
+class ResultColors {
+  ResultColors._();
+
+  static const Color card = Color(0xFFF3F3F3);
+  static const Color cardBorder = Color(0xFFB9B9B9);
+  static const Color track = Color(0xFFE6E6E6);
+  static const Color red = Color(0xFFE86969);
+  static const Color green = Color(0xFF8BD44F);
+  static const Color amber = Color(0xFFF2B84B);
+  static const Color text = Color(0xFF212121);
+  static const Color badgeBg = Color(0xFFB0CDD9);
+  static const Color badgeScore = Color(0xFF137C9D);
+  static const double radius = 18;
 }
 
-/// Scaffold padrão da identidade visual (fundo branco liso).
-class AppScaffold extends StatelessWidget {
-  final PreferredSizeWidget? appBar;
-  final Widget body;
-  const AppScaffold({super.key, this.appBar, required this.body});
+/// Paleta escura usada na câmera de protocolo e no relatório biométrico.
+class ProtocolColors {
+  ProtocolColors._();
 
-  @override
-  Widget build(BuildContext context) =>
-      Scaffold(appBar: appBar, body: body);
+  static const Color background = Color(0xFF0D0E14);
+  static const Color surface = Color(0xFF161922);
+  static const Color cardDark = Color(0xFF1E1E1E);
+  static const Color cardBorder = Color(0xFF282E3D);
+  static const Color brandRed = Color(0xFFE51937);
+  static const Color cyan = Color(0xFF00E5FF);
+  static const Color green = Color(0xFF00E676);
+  static const Color yellow = Color(0xFFFFEA00);
+  static const Color gold = Color(0xFFFFD700);
+  static const Color amber = Color(0xFFFFAB00);
+  static const Color orange = Color(0xFFFF9100);
+  static const Color pink = Color(0xFFFF4081);
+  static const Color red = Color(0xFFFF5252);
+  static const Color mutedText = Color(0xFFA0A8B8);
 }
 
 class AppTheme {
+  AppTheme._();
+
   static ThemeData get light {
     const scheme = ColorScheme.light(
       primary: AppColors.accent,
@@ -73,7 +93,6 @@ class AppTheme {
         centerTitle: true,
         toolbarHeight: 72,
         systemOverlayStyle: SystemUiOverlayStyle.light,
-        // Cabeçalho "Mobilidade" do Figma: 20 px, peso 400, espaçamento -0.8.
         titleTextStyle: TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.w400,
@@ -138,7 +157,7 @@ class AppTheme {
     );
   }
 
-  /// Tema escuro, usado somente sobre a imagem da câmera.
+  /// Tema escuro usado sobre a imagem da câmera.
   static ThemeData get camera => ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
@@ -151,34 +170,4 @@ class AppTheme {
         scaffoldBackgroundColor: Colors.black,
         splashFactory: NoSplash.splashFactory,
       );
-}
-
-class AppText {
-  static const TextStyle label = TextStyle(
-    fontSize: 12,
-    fontWeight: FontWeight.w700,
-    letterSpacing: 0.6,
-    color: AppColors.textSecondary,
-  );
-  static const TextStyle body = TextStyle(
-    fontSize: 14,
-    height: 1.4,
-    color: AppColors.textPrimary,
-  );
-  static const TextStyle muted = TextStyle(
-    fontSize: 13,
-    height: 1.4,
-    color: AppColors.textSecondary,
-  );
-  static const TextStyle title = TextStyle(
-    fontSize: 20,
-    fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
-  );
-  static const TextStyle value = TextStyle(
-    fontSize: 15,
-    fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
-    fontFeatures: [FontFeature.tabularFigures()],
-  );
 }
