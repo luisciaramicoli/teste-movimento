@@ -3,6 +3,15 @@
 
 ---
 
+> **Motor de pose atual:** a avaliação da biblioteca `movimento_mobilidade` usa o
+> **MediaPipe Pose Landmarker** como análise principal; o Google ML Kit é só a
+> reserva. Isso vale também para o protocolo de 5 posturas. As seções 3.1, 5 e 7
+> registram a etapa anterior, com o ML Kit como base, e o benchmark entre
+> motores. Veja a
+> [arquitetura atual](movimento_mobilidade/doc/arquitetura.md).
+
+---
+
 ## 1. Visão Geral do Projeto
 
 Este projeto tem como propósito desenvolver uma plataforma de **visão computacional aplicada à biomecânica e educação física**, capaz de:
@@ -30,22 +39,17 @@ flowchart TD
         VideoFile["Vídeo Gravado (MP4 / AVI)"]
     end
 
-    subgraph ModuloMobile["Módulo Mobile (Flutter Native)"]
-        CamCtrl["CameraController (ResolutionPreset.low)"]
-        NV21Buffer["Buffer NV21 Reutilizável (Zero GC)"]
-        MLKitEngine["Google ML Kit BlazePose (256x256)"]
-        PoseService["PoseDetectorService (Suavização Passa-Baixas)"]
-        TrackerService["JointAngleTracker (ROM Mín/Máx)"]
-        RepCounter["RepCounterService (Máquina de Estados)"]
-        Painter["PosePainter (Cache TextPainter + Esqueleto)"]
-        ReportUI["ReportScreen (Gráficos com fl_chart + CSV)"]
+    subgraph ModuloMobile["Avaliação (biblioteca movimento_mobilidade)"]
+        CamCtrl["CameraController (ResolutionPreset.medium, YUV420)"]
+        MediaPipeNative["MediaPipe Pose Landmarker lite (principal)"]
+        MLKitEngine["Google ML Kit (reserva)"]
+        PoseService["PoseDetectorService (filtro One Euro e ângulos)"]
+        Rules["FramingChecker + RepTracker"]
+        Results["Score, histórico, PDF e CSV"]
 
-        CamCtrl --> NV21Buffer --> MLKitEngine --> PoseService
-        PoseService --> TrackerService
-        PoseService --> RepCounter
-        PoseService --> Painter
-        TrackerService --> ReportUI
-        RepCounter --> ReportUI
+        CamCtrl --> MediaPipeNative --> PoseService
+        CamCtrl -. "sem MediaPipe" .-> MLKitEngine -.-> PoseService
+        PoseService --> Rules --> Results
     end
 
     subgraph ModuloPython["Módulo Python (Desktop & Análise)"]
@@ -60,7 +64,7 @@ flowchart TD
     end
 
     subgraph Benchmark["Frente de Benchmark Multi-Engine"]
-        B1["Branch main: Google ML Kit"]
+        B1["Base da etapa inicial: Google ML Kit"]
         B2["Branch benchmark/mediapipe-tasks: MediaPipe Tasks NPU/GPU"]
         B3["Branch benchmark/tflite-movenet: TFLite C FFI (MoveNet 192x192)"]
     end
@@ -210,23 +214,10 @@ teste-movimento/
 ├── pose_landmarker_lite.task      # Binário do modelo MediaPipe PoseLandmarker
 │
 └── mobile_app/                    # Aplicativo Mobile Multiplataforma (Flutter)
-    ├── pubspec.yaml               # Dependências Flutter (mlkit, camera_android, fl_chart)
+    ├── pubspec.yaml               # Depende da biblioteca movimento_mobilidade
     ├── lib/
-    │   ├── main.dart              # Inicialização com Camera2 API e travamento vertical
-    │   ├── models/
-    │   │   ├── joint_angle.dart   # Modelos de dados de ângulos e coordenadas Point2D
-    │   │   └── exercise_preset.dart # Configurações de thresholds dos exercícios
-    │   ├── services/
-    │   │   ├── pose_detector_service.dart # ML Kit BlazePose + filtro passa-baixas
-    │   │   └── rep_counter_service.dart   # Máquina de estados de repetições no mobile
-    │   ├── painters/
-    │   │   └── pose_painter.dart  # Renderização do esqueleto e badges com cache
-    │   └── views/
-    │       ├── camera_screen.dart # Tela principal de captura em tempo real (30 FPS)
-    │       └── report_screen.dart # Tela de relatórios pós-treino com gráficos interativos
-    ├── test/
-    │   └── unit_test.dart         # Suíte de testes unitários do app móvel
-    └── android/                   # Configurações nativas Android (minSdk 31, Camera2)
+    │   └── main.dart              # App de exemplo que usa a biblioteca
+    └── android/                   # Configurações nativas Android (minSdk 24)
 ```
 
 ---
@@ -361,7 +352,7 @@ O aplicativo agora conta com o `OneEuroFilter` nativo em Dart (`mobile_app/lib/s
 
 ### Próximas Etapas 🚀
 - [ ] Incorporar chave seletora para alternar entre MoveNet Lightning (192x192) e MoveNet Thunder (256x256) dentro da branch TFLite.
-- [ ] Adicionar cálculo angular 3D no motor ML Kit utilizando as coordenadas relativas de profundidade ($Z$) e landmarks anatômicos de pé e mão.
+- [ ] Adicionar cálculo angular 3D na avaliação (MediaPipe) utilizando as coordenadas relativas de profundidade ($Z$) e landmarks anatômicos de pé e mão.
 - [ ] Adicionar áudio-feedback (*text-to-speech*) informando em tempo real os graus de amplitude máxima atingidos.
 
 

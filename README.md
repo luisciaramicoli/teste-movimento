@@ -1,141 +1,149 @@
-# Rastreamento de Articulações Corporais, Análise de Ângulos (ROM) e Contador de Repetições
+# Teste Movimento · avaliação de mobilidade pela câmera
 
-Este projeto realiza a detecção das principais articulações do corpo humano via câmera ou vídeo em tempo real, calcula instantaneamente os ângulos anatômicos alcançados pelo usuário, monitora a **Amplitude de Movimento (ROM - Range of Motion)**, conta repetições de exercícios físicos de forma inteligente com máquina de estados por histerese, calcula a cadência e fases concêntrica/excêntrica e, ao final da sessão, gera automaticamente um painel gráfico completo com a evolução temporal e biomecânica.
+Projeto Integrador III (Sistemas Inteligentes, Fatec Pompeia), em parceria
+acadêmica com a Movement. Versão candidata à apresentação: **1.0.1+2003**, tag
+`v1.0.1-rc1`. Ela é a base dos testes finais e da defesa.
 
-Inspirado nos conceitos do repositório [vision-demos](https://github.com/jeremyipark/vision-demos).
+> Protótipo acadêmico. Não é instrumento clínico. A precisão em relação ao
+> goniômetro, o desempenho da versão atual e a usabilidade ainda não foram
+> medidos.
 
----
+## Componentes
 
-## 🎯 Articulações Monitoradas
+| Pasta | Conteúdo |
+| --- | --- |
+| [`mobile_app/`](mobile_app/README.md) | App Android integrado: perfil, avaliação, histórico e cópia do CSV |
+| [`movimento_mobilidade/`](movimento_mobilidade/README.md) | Biblioteca: câmera, pose, ângulos, repetições, resultado, PDF e CSV |
 
-- **Cotovelos (Esquerdo e Direito)**: Ângulo formado por `Ombro -> Cotovelo -> Punho` (Extensão e Flexão).
-- **Ombros (Esquerdo e Direito)**: Ângulo formado por `Quadril -> Ombro -> Cotovelo` (Elevação e Abdução).
-- **Joelhos (Esquerdo e Direito)**: Ângulo formado por `Quadril -> Joelho -> Tornozelo` (Extensão e Flexão).
-- **Quadril (Esquerdo e Direito)**: Ângulo formado por `Ombro -> Quadril -> Joelho` (Flexão e Extensão).
+O [protótipo em Python](PROTOTIPO_PYTHON.md) é uma etapa anterior e não integra a
+versão candidata.
 
----
+## Vídeo de demonstração
 
-## ⚡ Recursos Adicionados (vision-demos)
+O link do vídeo (3 min 42 s) está na ficha de desenvolvimento entregue à
+disciplina. A demonstração do app vai de cerca de 2:52 a 3:35.
 
-1. **Contador Inteligente de Repetições com Histerese**:
-   - Máquina de estados (`START` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `PEAK` $\rightarrow$ `RETURNING` $\rightarrow$ `COMPLETED`).
-   - Evita falso-positivos causados por oscilações ou tremores de câmera.
-   - Modos disponíveis:
-     - **Livre (`free`)**: Medição contínua de mobilidade sem contagem de repetições.
-     - **Agachamento (`squat`)**: Valida profundidade do joelho ($\le 95^\circ$) e extensão completa.
-     - **Rosca Bíceps (`curl`)**: Valida flexão máxima no cotovelo ($\le 55^\circ$) e retorno controlado.
-     - **Barra Fixa / Puxada (`chin_up`)**: Inspirado no demo chin-ups do vision-demos.
-2. **Cronometragem de Fases do Movimento**:
-   - Duração da fase **Concêntrica** (subida/esforço) vs **Excêntrica** (descida/controle).
-   - Cálculo dinâmico de **Cadência (RPM - Repetições por minuto)**.
-3. **Trilha de Movimento Visual ("Comet Trail")**:
-   - Rastro translúcido das articulações em movimento com efeito de desvanecimento suave (*fade-out*), permitindo avaliar a trajetória, estabilidade e simetria do movimento no espaço.
-4. **Feedback Postural e Barra de Amplitude**:
-   - Barra de progresso visual de 0% a 100% da amplitude exigida.
-   - Mensagens dinâmicas na tela (*"Desça mais"*, *"Boa amplitude! ✅"*, *"Excelente repetição! 🔥"*).
-5. **Relatório Gráfico Expandido**:
-   - Painel adicional no gráfico final exibindo o tempo de cada repetição e o ritmo do treino.
+**O vídeo mostra uma versão anterior à candidata.** Nela, a tela inicial se chama
+"App host", há avisos de enquadramento em texto e o resultado exibe
+"Alcance >24 cm / Ruim". **Esse alcance não foi medido:** eram valores fixos no
+código do app de exemplo. A candidata não os envia nem os exibe.
 
----
+## Instruções de acesso e execução
 
-## 📦 Instalação
-
-Recomenda-se o uso de um ambiente virtual Python:
+Requisitos: Flutter 3.24.5 (versão usada na verificação), Android SDK e aparelho
+com Android 7.0 (API 24) ou superior, com câmera.
 
 ```bash
-# 1. Criar ambiente virtual
-python3 -m venv venv
-
-# 2. Ativar o ambiente virtual
-# No Linux/macOS:
-source venv/bin/activate
-# No Windows:
-# venv\Scripts\activate
-
-# 3. Instalar as dependências
-pip install -r requirements.txt
+git clone https://github.com/luisciaramicoli/teste-movimento.git
+cd teste-movimento
+git checkout v1.0.1-rc1
+# copie antes as imagens da biblioteca (veja abaixo)
+cd mobile_app
+flutter pub get
+flutter run --release          # instala no aparelho conectado
+flutter build apk --release    # gera build/app/outputs/flutter-apk/app-release.apk
 ```
 
----
+**Imagens:** não são distribuídas neste repositório. A equipe precisa copiá-las
+para `movimento_mobilidade/assets/`, conforme a
+[lista de arquivos](movimento_mobilidade/README.md#imagens). Sem elas, o clone
+não reproduz a interface da versão candidata. Para obtê-las, fale com a equipe.
 
-## 🚀 Como Executar
+O APK de release é assinado com a chave de depuração do Android: serve para
+teste e apresentação, não para publicação em loja.
 
-### 1. Monitoramento com Webcam em Tempo Real
-```bash
-# Modo livre (apenas ângulos e amplitudes)
-python3 main.py
+## Fluxo principal
 
-# Modo Agachamento com contagem de repetições
-python3 main.py --exercise squat
+1. Informar o código do voluntário (`V01`), o peso, a idade (opcional) e a meta
+   da jornada (1, 3 ou 6 meses). Nomes são recusados.
+2. Ler "Como funciona" e tocar em **Iniciar**.
+3. Posicionar o celular fixo, com o corpo inteiro no quadro (protocolo: cerca de
+   2,5 m, na altura do quadril).
+4. Passo 1/2: de frente, três abduções de ombro, levando os braços acima da
+   cabeça.
+5. Passo 2/2: com o lado direito para a câmera, três agachamentos.
+6. Ver o resultado e gerar o relatório em PDF.
+7. Voltar à tela inicial, abrir a avaliação no histórico ou copiar o CSV.
 
-# Modo Rosca Bíceps
-python3 main.py --exercise curl
+Antes de gravar ou avaliar qualquer pessoa, obtenha o consentimento.
 
-# Modo Barra Fixa / Puxada
-python3 main.py --exercise chin_up
-```
+## Funcionalidades reais, simulações e valores calculados
 
-Se desejar usar outra webcam conectada (ex: índice 1 ou 2):
-```bash
-python3 main.py --camera 1 --exercise squat
-```
+| Tipo | Itens |
+| --- | --- |
+| Processados a partir da câmera | Pontos do corpo, ângulos, enquadramento, contagem de repetições, média e desvio-padrão. A precisão não foi validada. |
+| Funções do software | Histórico local, CSV, PDF, voz, recusa de nomes |
+| Calculados por regra, sem validação | Score de 0 a 10, faixas, alerta de assimetria. A **meta** é uma projeção, não um resultado nem uma previsão validada. |
+| Digitados pelo usuário | Código, peso, idade e duração da jornada |
+| Ilustrativos | Imagens de demonstração dos movimentos e silhueta de posicionamento |
+| Dados sintéticos | Testes automatizados da suíte |
+| Somente no vídeo (versão anterior) | "Alcance >24 cm / Ruim", valor fixo |
 
-### 2. Monitoramento a partir de um Vídeo Gravado
-```bash
-python3 main.py --video caminho/do/video.mp4 --exercise squat --export-csv historico.csv
-```
+O app de exemplo não tem modo de simulação. A biblioteca ainda contém o protocolo
+de câmera de 5 posturas, que o app não abre.
 
-### 3. Opções de Linha de Comando
-```bash
-python3 main.py --help
-# Opções:
-#   --camera INT            Índice da webcam (padrão: 0)
-#   --video PATH            Vídeo de entrada gravado
-#   --exercise CHOICE       free, squat, curl, chin_up (padrão: free)
-#   --no-trail              Desativa a trilha visual de cometa
-#   --output-graph PATH     Nome da imagem gerada (padrão: relatorio_angulos.png)
-#   --export-csv PATH       Exporta série temporal completa para CSV
-#   --confidence FLOAT      Confiança mínima de detecção (padrão: 0.5)
-#   --headless              Executa sem abrir janela OpenCV
-```
+## Verificação da candidata (27/11/2026)
 
-### 4. Demonstração / Teste Rápido (Sem Câmera)
-Para testar a pipeline completa com dados sintéticos e gerar o relatório com 5 repetições e cadência:
+| Verificação | Resultado |
+| --- | --- |
+| `flutter analyze` no app e na biblioteca | Sem apontamentos |
+| `flutter test` na biblioteca (o app não tem testes próprios) | 80 de 80, com dados sintéticos e testes de interface no computador |
+| Build do APK de release | Concluído, 210,3 MB |
+| Permissões do APK | Sem `INTERNET` e sem `RECORD_AUDIO` |
+| Emulador Android 17 (x86_64), modo avião | Abre, mostra as instruções, liga a câmera virtual, pede confirmação para encerrar e recusa um nome; nenhuma `FATAL EXCEPTION` |
 
-```bash
-python3 demo_simulation.py
-```
+No emulador não há pessoa na câmera e o MediaPipe não existe para `x86_64` (é
+usado o ML Kit). Por isso, **o fluxo completo da candidata, com contagem,
+resultado, histórico, PDF e CSV, ainda não foi demonstrado em aparelho.**
 
----
+## Dependências
 
-## 🎮 Controles Durante a Execução
+| Dependência | Uso |
+| --- | --- |
+| MediaPipe Tasks (Pose Landmarker `lite`, modelo incluído) | Motor de pose principal no Android |
+| Google ML Kit Pose Detection (cópia em `third_party/`) | Reserva |
+| `camera`, `camera_android` | Captura |
+| `flutter_tts` | Avisos por voz; depende do mecanismo de voz do aparelho |
+| `shared_preferences` | Histórico local |
+| `pdf`, `image` | Relatório em PDF |
+| `fl_chart` | Gráficos |
 
-Na janela do vídeo:
-- **`Q` ou `ESC`**: Encerra a sessão, calcula as estatísticas e gera automaticamente o relatório gráfico.
-- **`M`**: Alterna dinamicamente entre os modos de exercício (`Livre` $\rightarrow$ `Agachamento` $\rightarrow$ `Rosca` $\rightarrow$ `Barra Fixa`).
-- **`T`**: Liga / Desliga a trilha visual de cometa (*Comet Trail*).
-- **`R`**: Reseta os recordes de amplitude e zera o contador de repetições.
+Versões em [`movimento_mobilidade/pubspec.yaml`](movimento_mobilidade/pubspec.yaml)
+e nos arquivos `pubspec.lock`. O APK ainda declara, entre outras, as permissões
+`ACCESS_NETWORK_STATE`, `READ_EXTERNAL_STORAGE`, `FOREGROUND_SERVICE` e
+`RECEIVE_BOOT_COMPLETED`; falta revisar se são necessárias.
 
----
+## Limitações
 
-## 📊 Relatório Gráfico Gerado
+- Sem ensaios com goniômetro, de repetibilidade, estabilidade, FPS, latência ou
+  descarte de quadros.
+- Ângulos estimados em imagem 2D: câmera, roupa e iluminação afetam o resultado.
+- As referências do score vêm de estudos com amostras e métodos diferentes; idade
+  e sexo não mudam a referência padrão.
+- Protocolo fixo: dois movimentos, três repetições, agachamento pelo lado direito.
+- Os requisitos preveem abdução até 180°, houve decisão de ir até os ombros e o
+  app pede os braços acima da cabeça. Falta confirmar com a parceira.
+- Score e meta estavam fora do escopo dos requisitos iniciais.
+- Os avisos de enquadramento são por voz e destaque visual; o requisito RF06
+  precisa ser revisto.
+- Antes da correção de 27/11, o agachamento com a câmera traseira registrava o
+  lado esquerdo como direito.
+- Sem usuários externos nem aceite da parceira registrados.
+- A biblioteca não suporta iOS como plataforma validada.
 
-Ao finalizar a sessão, o arquivo `relatorio_angulos.png` é salvo em alta definição contendo:
-1. **Evolução Angular - Membros Superiores**: Gráficos temporais de cotovelos e ombros.
-2. **Evolução Angular - Membros Inferiores**: Gráficos temporais de joelhos e quadris.
-3. **Amplitude de Movimento Alcançada (ROM)**: Gráfico de barras horizontais comparando o ângulo mínimo vs máximo de cada articulação.
-4. **Análise Biomecânica de Repetições** (quando ativo): Gráfico de barras com a decomposição do tempo concêntrico vs excêntrico por repetição e a cadência média.
+## Trabalho futuro
 
----
+1. Executar o fluxo completo da candidata em aparelho, com consentimento, e
+   gravar a demonstração.
+2. Confirmar abdução, score, meta e PDF com a Movement e atualizar os requisitos.
+3. Ensaios de desempenho, estabilidade e repetibilidade com goniômetro.
+4. Teste de usabilidade a 2,5 m.
+5. Revisar permissões e assinar com chave própria.
+6. Integração ao Movement Arch (fora do escopo atual).
 
-## 📁 Estrutura dos Arquivos
+## Documentação técnica
 
-- [`main.py`](file:///home/luis/teste-movimento/main.py): Ponto de entrada da aplicação.
-- [`pose_detector.py`](file:///home/luis/teste-movimento/pose_detector.py): Mapeamento de articulações e cálculos trigonométricos de ângulos com MediaPipe Pose.
-- [`tracker.py`](file:///home/luis/teste-movimento/tracker.py): Gerenciamento da série temporal, cálculo de amplitudes (mín, máx, média) e exportação CSV.
-- [`rep_counter.py`](file:///home/luis/teste-movimento/rep_counter.py): Contador inteligente de repetições com máquina de estados, tempos concêntrico/excêntrico e cadência.
-- [`motion_trail.py`](file:///home/luis/teste-movimento/motion_trail.py): Renderização do efeito visual Comet Trail (rastro translúcido das articulações).
-- [`visualizer.py`](file:///home/luis/teste-movimento/visualizer.py): Renderização do HUD em tempo real e geração dos gráficos com Matplotlib.
-- [`demo_simulation.py`](file:///home/luis/teste-movimento/demo_simulation.py): Simulação biomecânica para testes rápidos.
-- [`test_system.py`](file:///home/luis/teste-movimento/test_system.py): Testes unitários para validar a geometria, máquina de estados e renderização.
-- [`requirements.txt`](file:///home/luis/teste-movimento/requirements.txt): Lista de dependências.
+[API](movimento_mobilidade/doc/api.md) ·
+[Medição e score](movimento_mobilidade/doc/medicao.md) ·
+[Arquitetura](movimento_mobilidade/doc/arquitetura.md) ·
+[Histórico de mudanças](movimento_mobilidade/CHANGELOG.md)
